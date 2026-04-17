@@ -1,9 +1,14 @@
 from fastapi import FastAPI, Depends
 from contextlib import asynccontextmanager
 from psycopg_pool import AsyncConnectionPool
+from psycopg.rows import dict_row
 
 import database
 from database import get_db_connection
+
+
+#routers
+from modules.auth.routes import router as auth_router
 
 
 
@@ -15,7 +20,7 @@ DATABASE_URL = "postgresql://postgres:postgres@localhost:5432/ustaad_db"
 async def Lifespan(app:FastAPI) :
     print("Initializing Database pool....")
 
-    database.pool = AsyncConnectionPool(conninfo=DATABASE_URL, open=True)
+    database.pool = AsyncConnectionPool(conninfo=DATABASE_URL, open=True, kwargs={"row_factory" : dict_row})
 
     yield
 
@@ -26,6 +31,7 @@ async def Lifespan(app:FastAPI) :
 
 app = FastAPI(lifespan=Lifespan)
 
+app.include_router(auth_router)
 
 
 
