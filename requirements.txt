@@ -1,0 +1,6 @@
+fastapi[standard]
+pyjwt
+pwdlib[argon2]
+uvicorn
+sqlalchemy
+psycopg3
