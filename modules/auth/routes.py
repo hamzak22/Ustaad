@@ -1,11 +1,13 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from typing import Annotated
 from datetime import datetime, timezone, timedelta
+from pydantic import BaseModel
 
 #database imports
 import database
 from database import get_db_connection
 import psycopg
+from psycopg.errors import UniqueViolation
 
 #model imports
 from .models import RegisterUserModel, RegisterAsWorkerModel
@@ -13,16 +15,57 @@ from .models import RegisterUserModel, RegisterAsWorkerModel
 #auth
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from pwdlib import PasswordHash
-from .token_generator import Token, TokenData, generate_access_token, generate_refresh_token
+from .token_generator import Token, TokenData, generate_access_token, generate_refresh_token, SECRET_KEY, ALGORITHM
+import jwt
+from jwt.exceptions import InvalidTokenError
 
 password_hash = PasswordHash.recommended()
 
-oauth2_scheme = OAuth2PasswordBearer("/token")
+oauth2_scheme = OAuth2PasswordBearer("/auth/token")
+
+INVALID_CREDENTIALS_EXCEPTION = HTTPException(
+    status_code=status.HTTP_401_UNAUTHORIZED,
+    detail="Invalid email or password",
+    headers={"WWW-Authenticate": "Bearer"},
+)
 
 router = APIRouter(
     prefix="/auth",
     tags=["Authentication"]
 )
+
+async def require_active_worker(token:Annotated[str, Depends(oauth2_scheme)], conn=Depends(get_db_connection)) :
+    try :
+        payload = jwt.decode(token, SECRET_KEY, algorithms=ALGORITHM)
+    except InvalidTokenError :
+        raise INVALID_CREDENTIALS_EXCEPTION
+    
+    email = payload.get("sub")
+
+    if not email :
+        raise INVALID_CREDENTIALS_EXCEPTION
+    
+    async with conn.cursor() as cur :
+        await cur.execute("SELECT w.worker_id, u.user_id, u.is_active, u.role FROM worker_profile w JOIN Users u ON u.user_id = w.worker_id WHERE u.email = %s", (email,))
+
+        worker = await cur.fetchone()
+
+        if not worker : raise HTTPException(status_code=403, detail="Please complete your worker profile")
+
+        if not worker.is_active : raise HTTPException(status_code=403, detail="Please complete your worker profile")
+
+        if worker.role != 'Worker':
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN, 
+                detail="Unauthorized access. Worker account required."
+            )
+
+        return worker
+
+
+
+class RefreshTokenRequest(BaseModel):
+    refresh_token: str
 
 @router.post("/register")
 async def register_user(user_data : RegisterUserModel, conn = Depends(get_db_connection)):
@@ -79,13 +122,11 @@ async def login_for_access_token(form_data : Annotated[OAuth2PasswordRequestForm
         await cur.execute("""SELECT user_id, full_name, email, role, password_hash FROM Users WHERE email=%s""", (form_data.username,))
         user = await cur.fetchone()
 
-        print(user)
-
         if not user :
-            raise HTTPException(status_code=404, detail="Invalid email or password")
+            raise INVALID_CREDENTIALS_EXCEPTION
 
         if not password_hash.verify(form_data.password, user['password_hash']) :
-            raise HTTPException(status_code=401, detail="Invalid email or password")
+            raise INVALID_CREDENTIALS_EXCEPTION
         
         token_data = {
         "sub": user["email"], # 'sub' (subject) is the standard field for user ID/email
@@ -109,15 +150,28 @@ async def login_for_access_token(form_data : Annotated[OAuth2PasswordRequestForm
     }
 
 @router.post("/refresh")
-async def get_new_access_token(refresh_token:str, conn = Depends(get_db_connection)) :
+async def get_new_access_token(refresh_data: RefreshTokenRequest, conn = Depends(get_db_connection)) :
     async with conn.cursor() as cur :
-        await cur.execute("""SELECT u.full_name, u.email, u.role, rt.expires_at FROM RefreshTokens rt JOIN Users u ON rt.user_id = u.user_id WHERE rt.token_text=%s""", (refresh_token,))
+        await cur.execute(
+            """SELECT u.user_id, u.full_name, u.email, u.role, u.is_active, rt.expires_at FROM RefreshTokens rt JOIN Users u ON rt.user_id = u.user_id WHERE rt.token_text=%s""",
+            (refresh_data.refresh_token,),
+        )
 
         data = await cur.fetchone()
 
     
     if not data or data['expires_at'] < datetime.now(timezone.utc) :
-        raise HTTPException(status_code=401, detail="Invalid or expired refresh token") 
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired refresh token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    if not data["is_active"]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Your account is disabled, please contact administrator",
+        )
     
     token_data = {
         "sub" : data['email'],
@@ -126,11 +180,97 @@ async def get_new_access_token(refresh_token:str, conn = Depends(get_db_connecti
     }
 
     new_access_token = generate_access_token(data=token_data)
+    new_refresh_token = generate_refresh_token()
+    new_expires_at = datetime.now(timezone.utc) + timedelta(days=7)
+
+    async with conn.transaction():
+        async with conn.cursor() as cur:
+            await cur.execute(
+                """DELETE FROM RefreshTokens WHERE token_text=%s""",
+                (refresh_data.refresh_token,),
+            )
+            await cur.execute(
+                """INSERT INTO RefreshTokens(user_id, token_text, expires_at) VALUES(%s,%s,%s)""",
+                (data["user_id"], new_refresh_token, new_expires_at),
+            )
 
     return {
         "access_token" : new_access_token,
+        "refresh_token": new_refresh_token,
         "token_type" : "bearer"
     }
+
+
+@router.get("/users/me")
+async def get_user_profile(token : Annotated[str, Depends(oauth2_scheme)], conn = Depends(get_db_connection)) :
+
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+    except InvalidTokenError :
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    
+    email = payload.get("sub")
+    
+    if not email :
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Unauthorized access",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    
+    
+    async with conn.transaction() :
+        async with conn.cursor() as cur :
+            await cur.execute("""SELECT user_id, full_name, email, phone_number, role, is_active FROM Users WHERE email=%s""", (email,))
+            user = await cur.fetchone()
+
+            if not user :
+                raise HTTPException(status_code=404, detail="User not found")
+            
+            if not user["is_active"]:
+                raise HTTPException(status_code=403, detail="Your account is disabled, please contact administrator")
+            
+            return user
+        
+@router.post("/worker-profile")
+async def create_worker_profile(data : RegisterAsWorkerModel, token : Annotated[str, Depends(oauth2_scheme)],conn = Depends(get_db_connection) ) :
+    #get user id from token, get experience, bio, hourly rate from body, insert into worker profile if does not exist.
+
+    try :
+        payload = jwt.decode(token, SECRET_KEY, algorithms=ALGORITHM)
+    except InvalidTokenError :
+        raise INVALID_CREDENTIALS_EXCEPTION
+    
+    email = payload.get("sub")
+    if not email :
+        raise INVALID_CREDENTIALS_EXCEPTION
+    
+    try : 
+        async with conn.transaction() :
+            async with conn.cursor() as cur :
+                await cur.execute("""SELECT user_id FROM Users WHERE email=%s""", (email,))
+                userdata = await cur.fetchone()
+
+                
+
+                userid = userdata["user_id"]
+
+
+
+                await cur.execute("""INSERT INTO worker_profile(worker_id,experience,hourly_rate,bio) VALUES(%s,%s,%s,%s)""", (userid,data.experience, data.hourly_rate, data.bio))
+
+                return {
+                    "message" : "Worker Profile Created Succesfully"
+                }
+    except UniqueViolation :
+        raise HTTPException(status_code=500, detail="Worker Profile already created")
+    
+
+
 
 
 

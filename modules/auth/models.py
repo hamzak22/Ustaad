@@ -18,10 +18,9 @@ class RegisterUserModel(BaseModel) :
         
         return self
     
-class RegisterAsWorkerModel(BaseModel) :
-    worker_id : int 
+class RegisterAsWorkerModel(BaseModel) : 
     experience : int
     hourly_rate : float
-    availability : AvailabilityEnum
     bio : str 
+
 
