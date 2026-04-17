@@ -3,6 +3,7 @@ from jwt.exceptions import InvalidTokenError
 from pwdlib import PasswordHash
 from pydantic import BaseModel
 from datetime import timezone, timedelta, datetime
+import secrets
 
 password_hash = PasswordHash.recommended()
 
@@ -25,7 +26,7 @@ class TokenData(BaseModel) :
 #token generation flow 
 # users logs in -> get user from db, if user exists -> generate jwt token from payload (email, role) -> return token
 
-def generate_access_token(data : dict, expiresIn : timedelta | None=None) -> Token :
+def generate_access_token(data : dict, expiresIn : timedelta | None=None) :
     to_encode = data.copy()
 
     if expiresIn :
@@ -37,6 +38,7 @@ def generate_access_token(data : dict, expiresIn : timedelta | None=None) -> Tok
 
     encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
 
-    token = Token(access_token=encoded_jwt, token_type="Bearer")
+    return encoded_jwt
 
-    return token
+def generate_refresh_token() :
+    return secrets.token_urlsafe(64)
