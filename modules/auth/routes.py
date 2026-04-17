@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from typing import Annotated
+from datetime import datetime, timezone, timedelta
 
 #database imports
 import database
@@ -12,7 +13,7 @@ from .models import RegisterUserModel, RegisterAsWorkerModel
 #auth
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from pwdlib import PasswordHash
-from .token_generator import Token, TokenData, generate_access_token
+from .token_generator import Token, TokenData, generate_access_token, generate_refresh_token
 
 password_hash = PasswordHash.recommended()
 
@@ -71,11 +72,11 @@ async def register_user(user_data : RegisterUserModel, conn = Depends(get_db_con
         )
     
 @router.post("/token")
-async def login_for_access_token(form_data : Annotated[OAuth2PasswordRequestForm, Depends()], conn = Depends(get_db_connection)) -> Token :
+async def login_for_access_token(form_data : Annotated[OAuth2PasswordRequestForm, Depends()], conn = Depends(get_db_connection)) :
     #first check if user exists in db, if not, throw error.
 
     async with conn.cursor() as cur :
-        await cur.execute("""SELECT full_name, email, role, password_hash FROM Users WHERE email=%s""", (form_data.username,))
+        await cur.execute("""SELECT user_id, full_name, email, role, password_hash FROM Users WHERE email=%s""", (form_data.username,))
         user = await cur.fetchone()
 
         print(user)
@@ -95,7 +96,41 @@ async def login_for_access_token(form_data : Annotated[OAuth2PasswordRequestForm
             data=token_data
         )
 
-        return access_token
+        refresh_token_text = generate_refresh_token()
+        expires_at = datetime.now(timezone.utc) + timedelta(days=7)
+
+        await cur.execute("""INSERT INTO RefreshTokens(user_id, token_text, expires_at) VALUES(%s,%s,%s)""",
+                          (user["user_id"], refresh_token_text, expires_at))
+
+        return {
+        "access_token": access_token,
+        "refresh_token": refresh_token_text, # Or set this as an HttpOnly cookie
+        "token_type": "bearer"
+    }
+
+@router.post("/refresh")
+async def get_new_access_token(refresh_token:str, conn = Depends(get_db_connection)) :
+    async with conn.cursor() as cur :
+        await cur.execute("""SELECT u.full_name, u.email, u.role, rt.expires_at FROM RefreshTokens rt JOIN Users u ON rt.user_id = u.user_id WHERE rt.token_text=%s""", (refresh_token,))
+
+        data = await cur.fetchone()
+
+    
+    if not data or data['expires_at'] < datetime.now(timezone.utc) :
+        raise HTTPException(status_code=401, detail="Invalid or expired refresh token") 
+    
+    token_data = {
+        "sub" : data['email'],
+        "role" : data['role'],
+        "full_name" : data['full_name']
+    }
+
+    new_access_token = generate_access_token(data=token_data)
+
+    return {
+        "access_token" : new_access_token,
+        "token_type" : "bearer"
+    }
 
 
 
