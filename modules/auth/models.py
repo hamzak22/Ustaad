@@ -1,5 +1,6 @@
 from pydantic import BaseModel, Field, EmailStr, model_validator
 from typing import Annotated
+from uuid import UUID
 
 from .enums import UserRoleEnum, AvailabilityEnum
 
@@ -18,9 +19,16 @@ class RegisterUserModel(BaseModel) :
         
         return self
     
+
+class ServiceListModel(BaseModel) :
+    id : UUID
+    hourly_rate : float
 class RegisterAsWorkerModel(BaseModel) : 
     experience : int
-    hourly_rate : float
     bio : str 
+    services : list[ServiceListModel]
+
+
+
 
 

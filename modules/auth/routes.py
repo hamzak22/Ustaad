@@ -253,24 +253,39 @@ async def create_worker_profile(data : RegisterAsWorkerModel, token : Annotated[
     if not user_id :
         raise INVALID_CREDENTIALS_EXCEPTION
     
+    services = data.services
+    
     try : 
         async with conn.transaction() :
             async with conn.cursor() as cur :
                 await cur.execute("""SELECT user_id, role FROM Users WHERE user_id=%s""", (user_id,))
                 userdata = await cur.fetchone()
 
+                print(userdata)
+
                 if not userdata :
                     raise INVALID_CREDENTIALS_EXCEPTION
                 
                 if userdata['role'] == 'Customer' :
                     raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Customer can not create a worker profile")
+                
+                await cur.execute("""INSERT INTO worker_profile(worker_id,experience,bio) VALUES(%s,%s,%s)""", (user_id,data.experience, data.bio))
 
-                await cur.execute("""INSERT INTO worker_profile(worker_id,experience,hourly_rate,bio) VALUES(%s,%s,%s,%s)""", (user_id,data.experience, data.hourly_rate, data.bio))
+                try :
+                    
+
+                    for service in services :
+                        await cur.execute("""INSERT INTO worker_skills(worker_id, service_id, hourly_rate) VALUES(%s,%s,%s)""", (user_id, service.id, service.hourly_rate,))
+
+                except UniqueViolation :
+                    raise HTTPException(status_code=400, detail="Can not add one service multiple times")
+
 
                 return {
                     "message" : "Worker Profile Created Succesfully"
                 }
-    except UniqueViolation :
+    except UniqueViolation as e :
+        print(e)
         raise HTTPException(status_code=500, detail="Worker Profile already created")
     
 

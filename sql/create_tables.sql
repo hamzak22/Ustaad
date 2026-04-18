@@ -14,7 +14,6 @@ is_active BOOLEAN DEFAULT TRUE
 CREATE TABLE IF NOT EXISTS worker_profile(
 worker_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
 experience INT NOT NULL,
-hourly_rate FLOAT NOT NULL,
 availability availability_enum DEFAULT 'Available',
 bio TEXT
 );
