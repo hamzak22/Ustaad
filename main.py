@@ -8,6 +8,7 @@ from database import get_db_connection
 
 #routers
 from modules.auth.routes import router as auth_router
+from modules.services.routes import router as services_router
 
 import asyncio
 
@@ -15,7 +16,9 @@ from core.config import get_settings
 
 settings = get_settings() 
 
+
 DATABASE_URL = f"postgresql://{settings.DB_USERNAME}:{settings.DB_PASSWORD}@{settings.DB_HOST}:5432/ustaad_db"
+
 
 @asynccontextmanager
 async def Lifespan(app:FastAPI) :
@@ -33,7 +36,7 @@ async def Lifespan(app:FastAPI) :
 app = FastAPI(lifespan=Lifespan)
 
 app.include_router(auth_router)
-
+app.include_router(services_router)
 
 
 @app.get("/")
