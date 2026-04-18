@@ -61,6 +61,20 @@ async def require_active_worker(token:Annotated[str, Depends(oauth2_scheme)], co
             )
 
         return worker
+    
+
+async def get_current_user_id(token:Annotated[str, Depends(oauth2_scheme)], conn=Depends(get_db_connection)) :
+    try :
+        payload = jwt.decode(token, SECRET_KEY, algorithms=ALGORITHM)
+    except InvalidTokenError :
+        raise INVALID_CREDENTIALS_EXCEPTION
+    
+    user_id = payload.get("sub")
+
+    if not user_id :
+        raise INVALID_CREDENTIALS_EXCEPTION
+    
+    return user_id
 
 
 
