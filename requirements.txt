@@ -3,3 +3,4 @@ pyjwt
 pwdlib[argon2]
 uvicorn
 psycopg
+python-dotenv

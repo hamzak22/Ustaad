@@ -128,8 +128,11 @@ async def login_for_access_token(form_data : Annotated[OAuth2PasswordRequestForm
         if not password_hash.verify(form_data.password, user['password_hash']) :
             raise INVALID_CREDENTIALS_EXCEPTION
         
+        json_userid = str(user["user_id"])
+        
         token_data = {
-        "sub": user["email"], # 'sub' (subject) is the standard field for user ID/email
+        "sub": json_userid, 
+        "email" : user["email"],
         "full_name": user["full_name"],
         "role": user["role"]
     }
@@ -174,7 +177,8 @@ async def get_new_access_token(refresh_data: RefreshTokenRequest, conn = Depends
         )
     
     token_data = {
-        "sub" : data['email'],
+        "sub" : data['user_id'],
+        "email" : data["email"],
         "role" : data['role'],
         "full_name" : data['full_name']
     }
@@ -213,9 +217,9 @@ async def get_user_profile(token : Annotated[str, Depends(oauth2_scheme)], conn 
             headers={"WWW-Authenticate": "Bearer"},
         )
     
-    email = payload.get("sub")
+    user_id = payload.get("sub")
     
-    if not email :
+    if not user_id :
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Unauthorized access",
@@ -225,7 +229,7 @@ async def get_user_profile(token : Annotated[str, Depends(oauth2_scheme)], conn 
     
     async with conn.transaction() :
         async with conn.cursor() as cur :
-            await cur.execute("""SELECT user_id, full_name, email, phone_number, role, is_active FROM Users WHERE email=%s""", (email,))
+            await cur.execute("""SELECT user_id, full_name, email, phone_number, role, is_active FROM Users WHERE user_id=%s""", (user_id,))
             user = await cur.fetchone()
 
             if not user :
@@ -245,23 +249,23 @@ async def create_worker_profile(data : RegisterAsWorkerModel, token : Annotated[
     except InvalidTokenError :
         raise INVALID_CREDENTIALS_EXCEPTION
     
-    email = payload.get("sub")
-    if not email :
+    user_id = payload.get("sub")
+    if not user_id :
         raise INVALID_CREDENTIALS_EXCEPTION
     
     try : 
         async with conn.transaction() :
             async with conn.cursor() as cur :
-                await cur.execute("""SELECT user_id FROM Users WHERE email=%s""", (email,))
+                await cur.execute("""SELECT user_id, role FROM Users WHERE user_id=%s""", (user_id,))
                 userdata = await cur.fetchone()
 
+                if not userdata :
+                    raise INVALID_CREDENTIALS_EXCEPTION
                 
+                if userdata['role'] == 'Customer' :
+                    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Customer can not create a worker profile")
 
-                userid = userdata["user_id"]
-
-
-
-                await cur.execute("""INSERT INTO worker_profile(worker_id,experience,hourly_rate,bio) VALUES(%s,%s,%s,%s)""", (userid,data.experience, data.hourly_rate, data.bio))
+                await cur.execute("""INSERT INTO worker_profile(worker_id,experience,hourly_rate,bio) VALUES(%s,%s,%s,%s)""", (user_id,data.experience, data.hourly_rate, data.bio))
 
                 return {
                     "message" : "Worker Profile Created Succesfully"
