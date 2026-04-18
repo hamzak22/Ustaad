@@ -6,15 +6,16 @@ from psycopg.rows import dict_row
 import database
 from database import get_db_connection
 
-
 #routers
 from modules.auth.routes import router as auth_router
 
-
-
 import asyncio
 
-DATABASE_URL = "postgresql://postgres:postgres@localhost:5432/ustaad_db"
+from core.config import get_settings
+
+settings = get_settings() 
+
+DATABASE_URL = f"postgresql://{settings.DB_USERNAME}:{settings.DB_PASSWORD}@{settings.DB_HOST}:5432/ustaad_db"
 
 @asynccontextmanager
 async def Lifespan(app:FastAPI) :

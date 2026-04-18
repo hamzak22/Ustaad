@@ -5,11 +5,15 @@ from pydantic import BaseModel
 from datetime import timezone, timedelta, datetime
 import secrets
 
+from core.config import get_settings
+
+settings = get_settings()
+
 password_hash = PasswordHash.recommended()
 
-SECRET_KEY="debcede28a5d2d90f2dffd53d950dc087be061853c14f2800ecbc307e71dfac8"
-ALGORITHM="HS256"
-TOKEN_EXPIRATION_MINUTES=30
+SECRET_KEY=settings.SECRET_KEY
+ALGORITHM=settings.ALGORITHM
+TOKEN_EXPIRATION_MINUTES=settings.TOKEN_EXPIRATION_MINUTES
 
 class Token(BaseModel) :
     access_token : str
