@@ -65,4 +65,4 @@ CREATE TABLE Locations (
     location_name VARCHAR(100) NOT NULL UNIQUE
 );
 
-
+-- Fixed queries 
