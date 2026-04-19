@@ -42,7 +42,7 @@ CREATE TABLE IF NOT EXISTS Worker_Skills (
 );
 
 CREATE TABLE IF NOT EXISTS Jobs (
-    job_id uuid PRIMARY KEY uuid_generate_v4(),
+    job_id uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
     client_id uuid NOT NULL REFERENCES Users(user_id) ON DELETE CASCADE,
     service_id uuid NOT NULL REFERENCES Services(service_id),
     title VARCHAR(255) NOT NULL,
@@ -55,7 +55,14 @@ CREATE TABLE IF NOT EXISTS Jobs (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 
     CONSTRAINT check_job_type CHECK (
-        (job_type == 'Direct' AND target_worker IS NOT NULL) OR 
-        (job_type =='Public' AND target_worker IS NULL)
+        (job_type = 'Direct' AND target_worker IS NOT NULL) OR 
+        (job_type ='Public' AND target_worker IS NULL)
     ) 
 );
+
+CREATE TABLE Locations (
+    location_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    location_name VARCHAR(100) NOT NULL UNIQUE
+);
+
+
