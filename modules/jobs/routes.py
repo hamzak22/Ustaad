@@ -171,12 +171,53 @@ async def get_job_feed(
         print(e)
         raise HTTPException(status_code=500, detail="An error occurred while fetching the job feed")
     
-#Get all jobs created by a client (user) - TO DO HASSAAN
-@router.get("/{client_id}") 
-async def get_all_jobs_created_by_me(client_id : str = Depends(get_current_user_id), conn:AsyncConnection=Depends(get_db_connection)) :
-    #Search in jobs table for all jobs created by the user with id=client_id, for every job, return the job title, description, estimated budget (if any), location, job type, job status, service name.
-    
-    pass
+#Get all jobs created by authenticated client
+@router.get("/my-jobs")
+async def get_all_jobs_created_by_me(
+    client_id: str = Depends(get_current_user_id),
+    conn: AsyncConnection = Depends(get_db_connection),
+):
+    query = """
+        SELECT
+            j.title AS job_title,
+            j.description AS job_description,
+            COALESCE(j.estimated_budget, 0) AS job_budget,
+            j.location_address AS job_location,
+            j.job_type,
+            j.status AS job_status,
+            s.service_name
+        FROM Jobs j
+        JOIN Services s ON s.service_id = j.service_id
+        WHERE j.client_id = %s
+        ORDER BY j.created_at DESC
+    """
+
+    try:
+        async with conn.cursor() as cur:
+            await cur.execute(query, (client_id,))
+            rows = await cur.fetchall()
+
+            jobs = [
+                {
+                    "job_title": row["job_title"],
+                    "job_description": row["job_description"],
+                    "job_budget": float(row["job_budget"]),
+                    "job_location": row["job_location"],
+                    "job_type": row["job_type"],
+                    "job_status": row["job_status"],
+                    "service_name": row["service_name"],
+                }
+                for row in rows
+            ]
+
+            return {
+                "message": "Jobs fetched successfully",
+                "jobs": jobs,
+            }
+    except Exception as e:
+        print(e)
+        raise HTTPException(status_code=500, detail="An error occurred while fetching jobs")
+
 
 
 
