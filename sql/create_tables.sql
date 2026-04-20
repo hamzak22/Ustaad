@@ -65,4 +65,24 @@ CREATE TABLE Locations (
     location_name VARCHAR(100) NOT NULL UNIQUE
 );
 
--- Fixed queries 
+CREATE TABLE Bids (
+    bid_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    job_id UUID NOT NULL REFERENCES Jobs(job_id) ON DELETE CASCADE,
+    worker_id UUID NOT NULL REFERENCES worker_profile(worker_id),
+    proposed_price NUMERIC(10, 2) NOT NULL,
+    eta VARCHAR(100) NOT NULL,            -- could be 1 hour or 2 days
+    description TEXT,                     -- Optional comments 
+    status VARCHAR(20) DEFAULT 'Pending' CHECK (status IN ('Pending', 'Accepted', 'Rejected')),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (job_id, worker_id)            
+);
+
+CREATE TABLE Bookings (
+    booking_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    job_id UUID NOT NULL UNIQUE REFERENCES Jobs(job_id),
+    worker_id UUID NOT NULL REFERENCES worker_profile(worker_id),
+    agreed_price NUMERIC(10, 2) NOT NULL,
+    eta VARCHAR(100) NOT NULL,
+    status VARCHAR(20) DEFAULT 'Scheduled' CHECK (status IN ('Scheduled', 'Completed', 'Cancelled')),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
