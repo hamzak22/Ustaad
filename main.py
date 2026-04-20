@@ -12,6 +12,8 @@ from modules.services.routes import router as services_router
 from modules.profilemgmt import routes as profile_routes
 from modules.locations import routes as locations_routes
 from modules.jobs.routes import router as jobs_router
+from modules.bids_bookings.routers import router as bids_bookings_router
+
 
 
 import asyncio
@@ -44,6 +46,7 @@ app.include_router(services_router)
 app.include_router(profile_routes.router)
 app.include_router(locations_routes.router)
 app.include_router(jobs_router)
+app.include_router(bids_bookings_router)
 
 
 
