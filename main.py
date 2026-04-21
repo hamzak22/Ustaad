@@ -43,12 +43,12 @@ async def Lifespan(app:FastAPI) :
 app = FastAPI(lifespan=Lifespan)
 
 
-app.include_router(auth_router)
-app.include_router(services_router)
-app.include_router(profile_routes.router)
-app.include_router(locations_routes.router)
-app.include_router(jobs_router)
-app.include_router(bids_bookings_router)
+app.include_router(auth_router, prefix="/api")
+app.include_router(services_router, prefix="/api")
+app.include_router(profile_routes.router, prefix="/api")
+app.include_router(locations_routes.router, prefix="/api")
+app.include_router(jobs_router, prefix="/api")
+app.include_router(bids_bookings_router, prefix="/api")
 
 
 allowed_origins = [

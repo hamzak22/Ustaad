@@ -1,8 +1,9 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import EmailStr
 from psycopg import AsyncConnection
+from psycopg.errors import UniqueViolation
 
-from .models import CreateJobResponseModel, CreateJobModel, JobFeedData, JobType, JobData, ClientJobResponseData
+from .models import CreateJobResponseModel, CreateJobModel, JobFeedData, JobType, JobData, ClientJobResponseData, SaveJobRequestModel, SaveJobResponeModel
 from database import get_db_connection
 
 from modules.auth.routes import get_current_user_id
@@ -12,6 +13,40 @@ router = APIRouter(
     prefix="/jobs",
     tags=["jobs"]
 )
+
+#TO-DO : API to get all saved jobs, API to "unsave a job (remove it from saved jobs list)"
+
+#Save a job to saved jobs list
+@router.post("/save-job")
+async def save_job(
+    data : SaveJobRequestModel,
+    conn : AsyncConnection = Depends(get_db_connection),
+    user_id : str = Depends(get_current_user_id)
+):
+    try :
+        async with conn.transaction() :
+            async with conn.cursor() as cur :
+                await cur.execute("""SELECT w.user_id, w.role FROM Users w WHERE w.user_id = %s""", (user_id,)) 
+
+                user_data = await cur.fetchone() 
+
+                if not user_data :
+                    raise HTTPException(status_code=400, detail="Unable to get user details")
+                
+                if not user_data["role"] == 'Worker' :
+                    raise HTTPException(status_code=400, detail="Customer can not save job")
+                
+                await cur.execute("""INSERT INTO Saved_Jobs(job_id, worker_id) VALUES(%s,%s) RETURNING id""", (data.job_id, user_id,))
+
+                saved_job = await cur.fetchone()
+
+                return {
+                    "message" : "Job Saved Succesfully",
+                    "job_id" : saved_job
+                }
+    except UniqueViolation :
+        raise HTTPException(status_code=500, detail="Job is already saved")
+
 
 
 

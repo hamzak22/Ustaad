@@ -21,7 +21,7 @@ from jwt.exceptions import InvalidTokenError
 
 password_hash = PasswordHash.recommended()
 
-oauth2_scheme = OAuth2PasswordBearer("/auth/token")
+oauth2_scheme = OAuth2PasswordBearer("/api/auth/token")
 
 INVALID_CREDENTIALS_EXCEPTION = HTTPException(
     status_code=status.HTTP_401_UNAUTHORIZED,

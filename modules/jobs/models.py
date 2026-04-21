@@ -52,4 +52,11 @@ class JobFeedData(BaseModel) :
 class ClientJobResponseData(BaseModel) :
     message : str = "Jobs fetched successfully"
     job_data : list[ClientJobResponse]
+
+class SaveJobRequestModel(BaseModel) :
+    job_id : UUID 
+
+class SaveJobResponeModel(BaseModel) : 
+    message : str
+    job_id : str
     
