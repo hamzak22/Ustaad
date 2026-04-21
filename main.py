@@ -13,6 +13,8 @@ from modules.services.routes import router as services_router
 from modules.profilemgmt import routes as profile_routes
 from modules.locations import routes as locations_routes
 from modules.jobs.routes import router as jobs_router
+from modules.bids_bookings.routers import router as bids_bookings_router
+
 
 
 import asyncio
@@ -41,6 +43,14 @@ async def Lifespan(app:FastAPI) :
 app = FastAPI(lifespan=Lifespan)
 
 
+app.include_router(auth_router)
+app.include_router(services_router)
+app.include_router(profile_routes.router)
+app.include_router(locations_routes.router)
+app.include_router(jobs_router)
+app.include_router(bids_bookings_router)
+
+
 allowed_origins = [
     "http://localhost:5173"
 ]
@@ -53,11 +63,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.include_router(auth_router, prefix="/api")
-app.include_router(services_router, prefix="/api")
-app.include_router(profile_routes.router, prefix="/api")
-app.include_router(locations_routes.router, prefix="/api")
-app.include_router(jobs_router, prefix="/api")
 
 
 
