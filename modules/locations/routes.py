@@ -6,7 +6,7 @@ from database import get_db_connection
 from modules.locations.models import LocationResponse
 
 # Set up the router
-router = APIRouter(prefix="/api/locations", tags=["Locations Catalog"])
+router = APIRouter(prefix="/locations", tags=["Locations Catalog"])
 
 # ==========================================
 # ENDPOINT: Get All Locations

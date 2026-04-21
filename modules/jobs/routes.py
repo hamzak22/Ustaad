@@ -1,7 +1,8 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from pydantic import EmailStr
 from psycopg import AsyncConnection
 
-from .models import CreateJobResponseModel, CreateJobModel, JobFeedData, JobType, JobData
+from .models import CreateJobResponseModel, CreateJobModel, JobFeedData, JobType, JobData, ClientJobResponseData
 from database import get_db_connection
 
 from modules.auth.routes import get_current_user_id
@@ -20,14 +21,14 @@ async def create_job(data : CreateJobModel, conn : AsyncConnection = Depends(get
     try :
         async with conn.transaction() :
             async with conn.cursor() as cur :
-                query_public = """INSERT INTO Jobs(service_id, title,description,job_type,status, location_address, estimated_budget, client_id) VALUES(%s,%s,%s,%s,%s,%s,%s,%s) RETURNING job_id"""
+                query_public = """INSERT INTO Jobs(service_id, title,description,job_type,status, location_address, city, estimated_budget, client_id) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING job_id"""
 
-                query_direct = """INSERT INTO Jobs(service_id, title,description,job_type,status, location_address, estimated_budget, client_id, target_worker) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING job_id"""
+                query_direct = """INSERT INTO Jobs(service_id, title,description,job_type,status, location_address, city, estimated_budget, client_id, target_worker) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING job_id"""
 
                 print(data)
 
                 if data.job_type == JobType.PUBLIC :
-                    await cur.execute(query_public, (data.service_id, data.title, data.description, data.job_type.value, "Open", data.location, data.budget, user_id,))
+                    await cur.execute(query_public, (data.service_id, data.title, data.description, data.job_type.value, "Open", data.location, data.city, data.budget, user_id,))
 
                     print("Public Job Created")
 
@@ -35,7 +36,7 @@ async def create_job(data : CreateJobModel, conn : AsyncConnection = Depends(get
                     if not data.target_worker :
                         raise HTTPException(status_code=400, detail="Target worker must be specified for direct jobs")
                     
-                    await cur.execute(query_direct, (data.service_id, data.title, data.description, data.job_type.value, "Open", data.location, data.budget, user_id, data.target_worker,))
+                    await cur.execute(query_direct, (data.service_id, data.title, data.description, data.job_type.value, "Open", data.location, data.city, data.budget, user_id, data.target_worker,))
 
                 job_row = await cur.fetchone()
                 print(job_row)
@@ -53,6 +54,37 @@ async def create_job(data : CreateJobModel, conn : AsyncConnection = Depends(get
     except Exception as e :
         print(e)
         raise HTTPException(status_code=500, detail="An error occurred while creating the job")
+
+
+@router.get("/worker-by-email")
+async def get_worker_by_email(
+    email: EmailStr,
+    conn: AsyncConnection = Depends(get_db_connection),
+    user_id: str = Depends(get_current_user_id),
+):
+    try:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                """
+                SELECT wp.worker_id, u.full_name
+                FROM Users u
+                JOIN worker_profile wp ON wp.worker_id = u.user_id
+                WHERE u.email = %s AND u.role = 'Worker'
+                """,
+                (email,),
+            )
+            worker = await cur.fetchone()
+
+            if not worker:
+                raise HTTPException(status_code=404, detail="Worker does not exist")
+
+            return {"worker_id": worker["worker_id"], "full_name" : worker["full_name"]}
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(e)
+        raise HTTPException(status_code=500, detail="An error occurred while fetching worker")
+
 #Get Job by iD
 @router.get("/by-id/{job_id}")
 async def get_job_by_id(job_id: str, conn: AsyncConnection = Depends(get_db_connection), user_id : str = Depends(get_current_user_id)) :
@@ -114,13 +146,22 @@ async def get_job_feed(
         FROM Jobs j
         JOIN Users c ON c.user_id = j.client_id
         JOIN Services s ON j.service_id = s.service_id
-        WHERE j.job_type = 'Public'
-          AND j.status = 'Open'
-          AND j.city = %s
-          AND j.service_id IN (
-              SELECT ws.service_id
-              FROM worker_skills ws
-              WHERE ws.worker_id = %s
+        WHERE j.status = 'Open'
+          AND (
+              (
+                  j.job_type = 'Public'
+                  AND j.city = %s
+                  AND j.service_id IN (
+                      SELECT ws.service_id
+                      FROM worker_skills ws
+                      WHERE ws.worker_id = %s
+                  )
+              )
+              OR
+              (
+                  j.job_type = 'Direct'
+                  AND j.target_worker = %s
+              )
           )
         ORDER BY j.created_at DESC
                 LIMIT %s OFFSET %s
@@ -145,6 +186,7 @@ async def get_job_feed(
                 feed_query,
                 (
                     user_city,
+                    user_id,
                     user_id,
                     page_size,
                     offset,
@@ -172,7 +214,7 @@ async def get_job_feed(
         raise HTTPException(status_code=500, detail="An error occurred while fetching the job feed")
     
 #Get all jobs created by authenticated client
-@router.get("/my-jobs")
+@router.get("/my-jobs", response_model=ClientJobResponseData)
 async def get_all_jobs_created_by_me(
     client_id: str = Depends(get_current_user_id),
     conn: AsyncConnection = Depends(get_db_connection),
@@ -184,6 +226,7 @@ async def get_all_jobs_created_by_me(
             COALESCE(j.estimated_budget, 0) AS job_budget,
             j.location_address AS job_location,
             j.job_type,
+            j.city,
             j.status AS job_status,
             s.service_name
         FROM Jobs j
@@ -205,6 +248,7 @@ async def get_all_jobs_created_by_me(
                     "job_location": row["job_location"],
                     "job_type": row["job_type"],
                     "job_status": row["job_status"],
+                    "city" : row["city"], 
                     "service_name": row["service_name"],
                 }
                 for row in rows
@@ -212,7 +256,7 @@ async def get_all_jobs_created_by_me(
 
             return {
                 "message": "Jobs fetched successfully",
-                "jobs": jobs,
+                "job_data": jobs,
             }
     except Exception as e:
         print(e)

@@ -50,6 +50,7 @@ CREATE TABLE IF NOT EXISTS Jobs (
     job_type job_type_enum NOT NULL DEFAULT 'Public',
     target_worker uuid REFERENCES worker_profile(worker_id),
     location_address TEXT NOT NULL DEFAULT 'Unspecified',
+    city VARCHAR(100) NOT NULL DEFAULT 'Unspecified',
     status job_status_enum NOT NULL DEFAULT 'Open',
     estimated_budget NUMERIC(10,2),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -85,4 +86,11 @@ CREATE TABLE Bookings (
     eta VARCHAR(100) NOT NULL,
     status VARCHAR(20) DEFAULT 'Scheduled' CHECK (status IN ('Scheduled', 'Completed', 'Cancelled')),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  );
+
+
+CREATE TABLE Saved_Jobs(
+	id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+	job_id UUID NOT NULL references jobs(job_id),
+	worker_id UUID NOT NULL references worker_profile(worker_id),
 );

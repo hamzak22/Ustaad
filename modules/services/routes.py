@@ -6,19 +6,20 @@ from uuid import UUID
 from database import get_db_connection
 from .models import ServiceResponse
 
-router = APIRouter(prefix="/api/services", tags=["Services"])
+router = APIRouter(prefix="/services", tags=["Services"])
 
 
 # ENDPOINT 1: Get All Services
 @router.get("/", response_model=list[ServiceResponse])
 async def get_all_services(conn: psycopg.AsyncConnection = Depends(get_db_connection)):
-    
-
+    print("hello")
     async with conn.cursor() as cur:
         
         await cur.execute("SELECT service_id, service_name, description FROM Services;")
         
         rows = await cur.fetchall()
+
+        
             
         return rows
 

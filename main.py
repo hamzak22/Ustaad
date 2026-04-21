@@ -1,4 +1,5 @@
 from fastapi import FastAPI, Depends
+from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 from psycopg_pool import AsyncConnectionPool
 from psycopg.rows import dict_row
@@ -41,12 +42,27 @@ async def Lifespan(app:FastAPI) :
 
 app = FastAPI(lifespan=Lifespan)
 
+
 app.include_router(auth_router)
 app.include_router(services_router)
 app.include_router(profile_routes.router)
 app.include_router(locations_routes.router)
 app.include_router(jobs_router)
 app.include_router(bids_bookings_router)
+
+
+allowed_origins = [
+    "http://localhost:5173"
+]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=allowed_origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 
 
 
