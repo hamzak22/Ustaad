@@ -85,15 +85,18 @@ class RefreshTokenRequest(BaseModel):
 async def register_user(user_data : RegisterUserModel, conn = Depends(get_db_connection)):
     #if email does not exist, user can create account
     hashed_password = password_hash.hash(password=user_data.password)
+    print("hello")
 
     try :
         async with conn.transaction() :
             async with conn.cursor() as cur :
                 await cur.execute(
-                """INSERT INTO Users(full_name, email, password_hash,phone_number, role) VALUES(%s,%s,%s,%s,%s) RETURNING user_id, full_name, email""",
-                (user_data.full_name, user_data.email, hashed_password, user_data.phone_number, user_data.role.value)
+                """INSERT INTO Users(full_name, email, password_hash,phone_number, city, role) VALUES(%s,%s,%s,%s,%s, %s) RETURNING user_id, full_name, email""",
+                (user_data.full_name, user_data.email, hashed_password, user_data.phone_number, user_data.city ,user_data.role.value)
             )
                 user = await cur.fetchone()
+
+                print(user)
 
         return {
         "message" : "Registration Succesfull",

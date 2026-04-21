@@ -10,6 +10,7 @@ class RegisterUserModel(BaseModel) :
     password : str = Field(min_length=8, description="Password must be greater than or equals to 8 characters")
     confirm_password : str = Field(min_length=8, description="Password must be greater than or equals to 8 characters")
     phone_number : str = Field(max_length=20)
+    city : str
     role : UserRoleEnum
 
     @model_validator(mode='after')

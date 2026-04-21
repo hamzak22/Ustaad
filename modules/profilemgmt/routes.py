@@ -10,7 +10,7 @@ from database import get_db_connection
 
 from modules.profilemgmt.models import UpdateWorkerProfileRequest, UserProfileResponse
 
-router = APIRouter(prefix="/api", tags=["Profile Management"])
+router = APIRouter(tags=["Profile Management"])
 oauth2_scheme = OAuth2PasswordBearer("/auth/token")
 
 # --- AUTH HELPER FUNCTION ---

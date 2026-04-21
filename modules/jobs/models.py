@@ -19,6 +19,7 @@ class CreateJobModel(BaseModel) :
     title : str = Field(..., description="The title of the job")
     description : str = Field(..., description="The description of the job")
     location : str = Field(..., description="The location of the job")
+    city : str = Field(..., description="The city where the job will be performed")
     budget : float = Field(..., description="The budget offered for the job")
     job_type : JobType = Field(..., description="The type of the job (public or direct)")
     target_worker : UUID = Field(None, description="The ID of the target worker for direct jobs (optional)")
@@ -35,6 +36,20 @@ class JobData(BaseModel) :
     job_budget : float
     service_name : str
 
+class ClientJobResponse(BaseModel) :
+    job_title : str 
+    job_description : str
+    job_location : str
+    job_budget : float
+    job_type : str
+    job_status : str
+    city: str
+    service_name : str
+
 class JobFeedData(BaseModel) :
     job_data : list[JobData]
+
+class ClientJobResponseData(BaseModel) :
+    message : str = "Jobs fetched successfully"
+    job_data : list[ClientJobResponse]
     
