@@ -25,6 +25,8 @@ worker_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
 experience INT NOT NULL,
 availability availability_enum DEFAULT 'Available',
 bio TEXT
+average_rating NUMERIC(3, 2) DEFAULT 0.00,
+total_reviews INT DEFAULT 0;
 );
 
 CREATE TABLE IF NOT EXISTS Services (
