@@ -24,7 +24,9 @@ CREATE TABLE IF NOT EXISTS worker_profile(
 worker_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
 experience INT NOT NULL,
 availability availability_enum DEFAULT 'Available',
-bio TEXT
+bio TEXT,
+average_rating NUMERIC(3, 2) DEFAULT 0.00,
+total_reviews INT DEFAULT 0;
 );
 
 CREATE TABLE IF NOT EXISTS Services (
@@ -94,3 +96,21 @@ CREATE TABLE Saved_Jobs(
 	job_id UUID NOT NULL references jobs(job_id),
 	worker_id UUID NOT NULL references worker_profile(worker_id),
 );
+
+
+CREATE TABLE Reviews (
+    review_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    booking_id UUID NOT NULL UNIQUE REFERENCES Bookings(booking_id) ON DELETE CASCADE,
+    job_id UUID NOT NULL REFERENCES Jobs(job_id) ON DELETE CASCADE,
+    customer_id UUID NOT NULL REFERENCES Users(user_id),
+    worker_id UUID NOT NULL REFERENCES worker_profile(worker_id),
+    rating INT NOT NULL CHECK (rating >= 1 AND rating <= 5), 
+    comment TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+ALTER TABLE worker_profile
+ADD COLUMN availability_status VARCHAR(20) DEFAULT 'Available' CHECK (availability_status IN ('Available', 'Busy', 'Offline'));
+
+
+
