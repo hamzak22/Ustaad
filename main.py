@@ -14,6 +14,7 @@ from modules.profilemgmt import routes as profile_routes
 from modules.locations import routes as locations_routes
 from modules.jobs.routes import router as jobs_router
 from modules.bids_bookings.routers import router as bids_bookings_router
+from modules.reviews.routes import router as reviews_router
 
 
 
@@ -49,6 +50,7 @@ app.include_router(profile_routes.router, prefix="/api")
 app.include_router(locations_routes.router, prefix="/api")
 app.include_router(jobs_router, prefix="/api")
 app.include_router(bids_bookings_router, prefix="/api")
+app.include_router(reviews_router, prefix="/api")
 
 
 allowed_origins = [
