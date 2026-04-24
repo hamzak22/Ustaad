@@ -15,6 +15,51 @@ router = APIRouter(
 )
 
 #TO-DO : API to get all saved jobs, API to "unsave a job (remove it from saved jobs list)"
+@router.get("/saved-jobs") 
+async def get_all_saved_jobs(conn:AsyncConnection=Depends(get_db_connection), worker_id : str = Depends(get_current_user_id)) :
+    try :
+        async with conn.cursor() as cur :
+            await cur.execute("""SELECT sj.id, j.title as job_title, j.description as job_description, j.city, j.estimated_budget as budget, j.status as job_status FROM Saved_Jobs sj JOIN jobs j on sj.job_id = j.job_id WHERE sj.worker_id = %s""", (worker_id,))
+
+            saved_jobs = await cur.fetchall()
+
+            return {
+                "message" : "Saved jobs retrieved succesfully",
+                "saved_jobs" : saved_jobs
+            }
+
+    except UniqueViolation :
+        raise HTTPException(status_code=500, detail="Unexpected Error occured")
+    
+
+@router.patch("/{saved_job_id}/unsave-job") 
+async def unsave_job(saved_job_id:str,conn:AsyncConnection=Depends(get_db_connection), worker_id : str=Depends(get_current_user_id)) :
+    try :
+        async with conn.transaction() :
+            async with conn.cursor() as cur :
+                
+                await cur.execute("""SELECT * FROM saved_jobs WHERE id = %s""", (saved_job_id,))
+
+                print(saved_job_id)
+
+                saved_job = await cur.fetchone() 
+
+                print(saved_job)
+
+                if str(saved_job["worker_id"]) != worker_id :
+                    raise HTTPException(status_code=401, detail="Unauthorized, Can not unsave someone else's saved job")
+                
+                if saved_job["status"] == "UNSAVED" :
+                    return {"message" : "Job already unsaved"}
+                
+                await cur.execute("UPDATE Saved_Jobs SET status=%s WHERE id=%s", ('UNSAVED', saved_job_id))
+
+                return {"message" : "Job status changed"}
+    except Exception as e :
+        print(e)
+        raise HTTPException(status_code=500, detail="Unexpected error occured")
+
+
 
 #Save a job to saved jobs list
 @router.post("/save-job")
@@ -231,6 +276,7 @@ async def get_job_feed(
 
             job_data = [
                 JobData(
+                    job_id=str(row["job_id"]),
                     client_name=row["client_name"],
                     job_title=row["job_title"],
                     job_description=row["job_description"],
