@@ -29,6 +29,7 @@ class CreateJobResponseModel(BaseModel) :
     job_id : UUID = Field(..., description="The ID of the created job")
 
 class JobData(BaseModel) :
+    job_id : str
     client_name : str
     job_title : str 
     job_description : str
