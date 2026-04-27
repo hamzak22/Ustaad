@@ -351,6 +351,7 @@ async def get_job_feed(
 
             job_data = [
                 JobData(
+                    job_id=str(row["job_id"]),
                     client_name=row["client_name"],
                     job_title=row["job_title"],
                     job_description=row["job_description"],

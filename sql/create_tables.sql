@@ -95,6 +95,11 @@ CREATE TABLE Saved_Jobs(
 	id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
 	job_id UUID NOT NULL references jobs(job_id),
 	worker_id UUID NOT NULL references worker_profile(worker_id),
+	status TEXT Default 'SAVED',
+
+	CONSTRAINT unique_saved_job UNIQUE(job_id, worker_id)
+);
+
 );
 
 
@@ -111,6 +116,5 @@ CREATE TABLE Reviews (
 
 ALTER TABLE worker_profile
 ADD COLUMN availability_status VARCHAR(20) DEFAULT 'Available' CHECK (availability_status IN ('Available', 'Busy', 'Offline'));
-
 
 
