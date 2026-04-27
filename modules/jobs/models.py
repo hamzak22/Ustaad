@@ -59,5 +59,27 @@ class SaveJobRequestModel(BaseModel) :
 
 class SaveJobResponeModel(BaseModel) : 
     message : str
-    job_id : str
+    job_id : UUID
+
+
+class UnsaveJobResponseModel(BaseModel):
+    message: str
+    job_id: UUID
+
+
+class SavedJobData(BaseModel):
+    job_id: UUID
+    client_name: str
+    job_title: str
+    job_description: str
+    job_location: str
+    job_budget: float
+    job_type: str
+    job_status: str
+    service_name: str
+
+
+class SavedJobsResponseModel(BaseModel):
+    message: str = "Saved jobs fetched successfully"
+    job_data: list[SavedJobData]
     

@@ -1,9 +1,21 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import EmailStr
 from psycopg import AsyncConnection
-from psycopg.errors import UniqueViolation
+from uuid import UUID
 
-from .models import CreateJobResponseModel, CreateJobModel, JobFeedData, JobType, JobData, ClientJobResponseData, SaveJobRequestModel, SaveJobResponeModel
+from .models import (
+    CreateJobResponseModel,
+    CreateJobModel,
+    JobFeedData,
+    JobType,
+    JobData,
+    ClientJobResponseData,
+    SaveJobRequestModel,
+    SaveJobResponeModel,
+    UnsaveJobResponseModel,
+    SavedJobsResponseModel,
+    SavedJobData,
+)
 from database import get_db_connection
 
 from modules.auth.routes import get_current_user_id
@@ -14,84 +26,147 @@ router = APIRouter(
     tags=["jobs"]
 )
 
-#TO-DO : API to get all saved jobs, API to "unsave a job (remove it from saved jobs list)"
-@router.get("/saved-jobs") 
-async def get_all_saved_jobs(conn:AsyncConnection=Depends(get_db_connection), worker_id : str = Depends(get_current_user_id)) :
-    try :
-        async with conn.cursor() as cur :
-            await cur.execute("""SELECT sj.id, j.title as job_title, j.description as job_description, j.city, j.estimated_budget as budget, j.status as job_status FROM Saved_Jobs sj JOIN jobs j on sj.job_id = j.job_id WHERE sj.worker_id = %s""", (worker_id,))
 
-            saved_jobs = await cur.fetchall()
+async def _ensure_worker_profile(conn: AsyncConnection, user_id: str) -> None:
+    async with conn.cursor() as cur:
+        await cur.execute("SELECT 1 FROM worker_profile WHERE worker_id = %s", (user_id,))
+        worker = await cur.fetchone()
 
-            return {
-                "message" : "Saved jobs retrieved succesfully",
-                "saved_jobs" : saved_jobs
-            }
-
-    except UniqueViolation :
-        raise HTTPException(status_code=500, detail="Unexpected Error occured")
-    
-
-@router.patch("/{saved_job_id}/unsave-job") 
-async def unsave_job(saved_job_id:str,conn:AsyncConnection=Depends(get_db_connection), worker_id : str=Depends(get_current_user_id)) :
-    try :
-        async with conn.transaction() :
-            async with conn.cursor() as cur :
-                
-                await cur.execute("""SELECT * FROM saved_jobs WHERE id = %s""", (saved_job_id,))
-
-                print(saved_job_id)
-
-                saved_job = await cur.fetchone() 
-
-                print(saved_job)
-
-                if str(saved_job["worker_id"]) != worker_id :
-                    raise HTTPException(status_code=401, detail="Unauthorized, Can not unsave someone else's saved job")
-                
-                if saved_job["status"] == "UNSAVED" :
-                    return {"message" : "Job already unsaved"}
-                
-                await cur.execute("UPDATE Saved_Jobs SET status=%s WHERE id=%s", ('UNSAVED', saved_job_id))
-
-                return {"message" : "Job status changed"}
-    except Exception as e :
-        print(e)
-        raise HTTPException(status_code=500, detail="Unexpected error occured")
+        if not worker:
+            raise HTTPException(status_code=403, detail="Only workers can use saved jobs")
 
 
-
-#Save a job to saved jobs list
-@router.post("/save-job")
+@router.post("/save", response_model=SaveJobResponeModel, status_code=status.HTTP_201_CREATED)
 async def save_job(
-    data : SaveJobRequestModel,
-    conn : AsyncConnection = Depends(get_db_connection),
-    user_id : str = Depends(get_current_user_id)
+    data: SaveJobRequestModel,
+    conn: AsyncConnection = Depends(get_db_connection),
+    user_id: str = Depends(get_current_user_id),
 ):
-    try :
-        async with conn.transaction() :
-            async with conn.cursor() as cur :
-                await cur.execute("""SELECT w.user_id, w.role FROM Users w WHERE w.user_id = %s""", (user_id,)) 
+    try:
+        async with conn.transaction():
+            await _ensure_worker_profile(conn, user_id)
 
-                user_data = await cur.fetchone() 
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    """
+                    SELECT j.job_id
+                    FROM Jobs j
+                    WHERE j.job_id = %s
+                      AND (j.job_type = 'Public' OR j.target_worker = %s)
+                    """,
+                    (str(data.job_id), user_id),
+                )
+                job = await cur.fetchone()
 
-                if not user_data :
-                    raise HTTPException(status_code=400, detail="Unable to get user details")
-                
-                if not user_data["role"] == 'Worker' :
-                    raise HTTPException(status_code=400, detail="Customer can not save job")
-                
-                await cur.execute("""INSERT INTO Saved_Jobs(job_id, worker_id) VALUES(%s,%s) RETURNING id""", (data.job_id, user_id,))
+                if not job:
+                    raise HTTPException(status_code=404, detail="Job not found or not accessible")
 
-                saved_job = await cur.fetchone()
+                await cur.execute(
+                    "SELECT 1 FROM Saved_Jobs WHERE job_id = %s AND worker_id = %s",
+                    (str(data.job_id), user_id),
+                )
+                already_saved = await cur.fetchone()
 
-                return {
-                    "message" : "Job Saved Succesfully",
-                    "job_id" : saved_job
-                }
-    except UniqueViolation :
-        raise HTTPException(status_code=500, detail="Job is already saved")
+                if already_saved:
+                    raise HTTPException(status_code=409, detail="Job already saved")
 
+                await cur.execute(
+                    "INSERT INTO Saved_Jobs(job_id, worker_id) VALUES(%s, %s)",
+                    (str(data.job_id), user_id),
+                )
+
+        return SaveJobResponeModel(message="Job saved successfully", job_id=data.job_id)
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(e)
+        raise HTTPException(status_code=500, detail="An error occurred while saving the job")
+
+
+@router.delete("/saved/{job_id}", response_model=UnsaveJobResponseModel)
+async def unsave_job(
+    job_id: UUID,
+    conn: AsyncConnection = Depends(get_db_connection),
+    user_id: str = Depends(get_current_user_id),
+):
+    try:
+        async with conn.transaction():
+            await _ensure_worker_profile(conn, user_id)
+
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    """
+                    DELETE FROM Saved_Jobs
+                    WHERE job_id = %s AND worker_id = %s
+                    RETURNING job_id
+                    """,
+                    (str(job_id), user_id),
+                )
+                deleted = await cur.fetchone()
+
+                if not deleted:
+                    raise HTTPException(status_code=404, detail="Saved job not found")
+
+        return UnsaveJobResponseModel(message="Job unsaved successfully", job_id=job_id)
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(e)
+        raise HTTPException(status_code=500, detail="An error occurred while unsaving the job")
+
+
+@router.get("/saved", response_model=SavedJobsResponseModel)
+async def get_saved_jobs(
+    conn: AsyncConnection = Depends(get_db_connection),
+    user_id: str = Depends(get_current_user_id),
+):
+    query = """
+        SELECT
+            j.job_id,
+            c.full_name AS client_name,
+            j.title AS job_title,
+            j.description AS job_description,
+            j.location_address AS job_location,
+            COALESCE(j.estimated_budget, 0) AS job_budget,
+            j.job_type,
+            j.status AS job_status,
+            s.service_name
+        FROM Saved_Jobs sj
+        JOIN Jobs j ON j.job_id = sj.job_id
+        JOIN Users c ON c.user_id = j.client_id
+        JOIN Services s ON s.service_id = j.service_id
+        WHERE sj.worker_id = %s
+        ORDER BY j.created_at DESC
+    """
+
+    try:
+        await _ensure_worker_profile(conn, user_id)
+
+        async with conn.cursor() as cur:
+            await cur.execute(query, (user_id,))
+            rows = await cur.fetchall()
+
+            jobs = [
+                SavedJobData(
+                    job_id=row["job_id"],
+                    client_name=row["client_name"],
+                    job_title=row["job_title"],
+                    job_description=row["job_description"],
+                    job_location=row["job_location"],
+                    job_budget=float(row["job_budget"]),
+                    job_type=row["job_type"],
+                    job_status=row["job_status"],
+                    service_name=row["service_name"],
+                )
+                for row in rows
+            ]
+
+            return SavedJobsResponseModel(job_data=jobs)
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(e)
+        raise HTTPException(status_code=500, detail="An error occurred while fetching saved jobs")
 
 
 
@@ -343,13 +418,3 @@ async def get_all_jobs_created_by_me(
         print(e)
         raise HTTPException(status_code=500, detail="An error occurred while fetching jobs")
 
-
-
-
-
-
-
-
-
-
-#Delete job by id

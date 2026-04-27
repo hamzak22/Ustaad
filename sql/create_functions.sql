@@ -40,8 +40,6 @@ BEGIN
     INSERT INTO Bookings (job_id, worker_id, agreed_price, eta, status)
     VALUES (v_job_id, v_worker_id, v_price, v_eta, 'Scheduled')
     RETURNING booking_id INTO p_booking_id;
-    
-    
-    COMMIT;
+
 END;
 $$;

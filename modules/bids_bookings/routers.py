@@ -116,67 +116,148 @@ async def accept_bid(
     conn: psycopg.AsyncConnection = Depends(get_db_connection)
 ):
     try:
-        # Wrap the ENTIRE process (including the initial SELECT) in a transaction to prevent race conditions
         async with conn.transaction():
             async with conn.cursor() as cur:
-                # 1. Fetch all required data from the Bid
-                await cur.execute("""
-                    SELECT b.job_id AS job_id, 
-                           b.worker_id AS worker_id, 
-                           b.proposed_price AS proposed_price, 
-                           b.eta AS eta, 
-                           j.client_id AS client_id, 
-                           j.status AS status
-                    FROM Bids b
-                    JOIN Jobs j ON b.job_id = j.job_id
-                    WHERE b.bid_id = %s
-                """, (str(bid_id),))
-                
-                row = await cur.fetchone()
-                if not row:
-                    raise HTTPException(status_code=404, detail="Bid not found.")
-                    
-                job_id = row["job_id"]
-                worker_id = row["worker_id"]
-                agreed_price = row["proposed_price"]
-                eta = row["eta"]
-                client_id = row["client_id"]
-                job_status = row["status"]
-                
-                # 2. Security Checks
-                if str(client_id) != user_id:
-                    raise HTTPException(status_code=403, detail="Only the job creator can accept this bid.")
-                if job_status != 'Open':
-                    raise HTTPException(status_code=400, detail="This job has already been assigned.")
+                # Call stored procedure in create_functions.sql
+                await cur.execute("CALL assign_worker_to_request(%s, %s, NULL)", (str(bid_id), user_id))
+                result = await cur.fetchone()
 
-                # 3. Write Operations
-                # A. Accept this bid
-                await cur.execute("UPDATE Bids SET status = 'Accepted' WHERE bid_id = %s", (str(bid_id),))
-                
-                # B. Reject all competing bids
-                await cur.execute("UPDATE Bids SET status = 'Rejected' WHERE job_id = %s AND bid_id != %s", (job_id, str(bid_id)))
-                
-                # C. Close the Job
-                await cur.execute("UPDATE Jobs SET status = 'In Progress' WHERE job_id = %s", (job_id,))
-                
-                # D. Generate the Contract
-                await cur.execute("""
-                    INSERT INTO Bookings (job_id, worker_id, agreed_price, eta, status)
-                    VALUES (%s, %s, %s, %s, 'Scheduled')
-                    RETURNING booking_id AS booking_id;
-                """, (job_id, worker_id, agreed_price, eta))
-                
-                booking_row = await cur.fetchone()
-                new_booking_id = booking_row["booking_id"] 
-                
-            return {
-                "message": "Bid accepted and Contract created successfully!",
-                "booking_id": new_booking_id
-            }
+                return {
+                    "message": "Bid accepted and Contract created successfully!",
+                    "booking_id": result["p_booking_id"]
+                }
             
+    except psycopg.errors.RaiseException as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+# ==========================================
+# Endpoint 4: Mark a booking as completed
+# ==========================================
+@router.post("/bookings/{booking_id}/complete")
+async def complete_booking(
+    booking_id: UUID,
+    user_id: str = Depends(get_current_user_id),
+    conn: psycopg.AsyncConnection = Depends(get_db_connection),
+):
+    try:
+        async with conn.transaction():
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    """
+                    SELECT b.booking_id AS booking_id,
+                           b.worker_id AS worker_id,
+                           b.status AS booking_status,
+                           j.job_id AS job_id,
+                           j.status AS job_status
+                    FROM Bookings b
+                    JOIN Jobs j ON j.job_id = b.job_id
+                    WHERE b.booking_id = %s
+                    """,
+                    (str(booking_id),),
+                )
+                booking_row = await cur.fetchone()
+
+                if not booking_row:
+                    raise HTTPException(status_code=404, detail="Booking not found")
+
+                if str(booking_row["worker_id"]) != user_id:
+                    raise HTTPException(status_code=403, detail="Only the assigned worker can complete this booking")
+
+                if booking_row["booking_status"] == "Completed":
+                    raise HTTPException(status_code=400, detail="Booking is already completed")
+
+                if booking_row["booking_status"] == "Cancelled":
+                    raise HTTPException(status_code=400, detail="Cancelled bookings cannot be completed")
+
+                if booking_row["job_status"] == "Completed":
+                    raise HTTPException(status_code=400, detail="Job is already completed")
+
+                await cur.execute(
+                    """
+                    UPDATE Bookings
+                    SET status = 'Completed'
+                    WHERE booking_id = %s
+                    RETURNING booking_id AS booking_id, status AS status
+                    """,
+                    (str(booking_id),),
+                )
+                updated_booking = await cur.fetchone()
+
+                return {
+                    "message": "Booking marked as completed successfully",
+                    "booking_id": updated_booking["booking_id"],
+                    "status": updated_booking["status"],
+                }
+
     except HTTPException:
-        # Re-raise standard HTTP Exceptions (like 404 or 403) so FastAPI can handle them normally
         raise
     except Exception as e:
-        # Catch unexpected database crashes and return a 500
-        raise HTTPException(status_code=500, detail=f"Transaction failed: {str(e)}")
+        print(e)
+        raise HTTPException(status_code=500, detail="An error occurred while completing the booking")
+
+
+# ==========================================
+# Endpoint 5: Cancel a booking
+# ==========================================
+@router.post("/bookings/{booking_id}/cancel")
+async def cancel_booking(
+    booking_id: UUID,
+    user_id: str = Depends(get_current_user_id),
+    conn: psycopg.AsyncConnection = Depends(get_db_connection),
+):
+    try:
+        async with conn.transaction():
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    """
+                    SELECT b.booking_id AS booking_id,
+                           b.worker_id AS worker_id,
+                           b.status AS booking_status,
+                           j.client_id AS client_id,
+                           j.status AS job_status
+                    FROM Bookings b
+                    JOIN Jobs j ON j.job_id = b.job_id
+                    WHERE b.booking_id = %s
+                    """,
+                    (str(booking_id),),
+                )
+                booking_row = await cur.fetchone()
+
+                if not booking_row:
+                    raise HTTPException(status_code=404, detail="Booking not found")
+
+                if str(booking_row["client_id"]) != user_id and str(booking_row["worker_id"]) != user_id:
+                    raise HTTPException(status_code=403, detail="Only the job owner or assigned worker can cancel this booking")
+
+                if booking_row["booking_status"] == "Cancelled":
+                    raise HTTPException(status_code=400, detail="Booking is already cancelled")
+
+                if booking_row["booking_status"] == "Completed":
+                    raise HTTPException(status_code=400, detail="Completed bookings cannot be cancelled")
+
+                if booking_row["job_status"] == "Completed":
+                    raise HTTPException(status_code=400, detail="Completed jobs cannot be cancelled")
+
+                await cur.execute(
+                    """
+                    UPDATE Bookings
+                    SET status = 'Cancelled'
+                    WHERE booking_id = %s
+                    RETURNING booking_id AS booking_id, status AS status
+                    """,
+                    (str(booking_id),),
+                )
+                updated_booking = await cur.fetchone()
+
+                return {
+                    "message": "Booking cancelled successfully",
+                    "booking_id": updated_booking["booking_id"],
+                    "status": updated_booking["status"],
+                }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(e)
+        raise HTTPException(status_code=500, detail="An error occurred while cancelling the booking")
