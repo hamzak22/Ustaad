@@ -3,13 +3,18 @@ from uuid import UUID
 from typing import Optional
 from datetime import datetime
 
+
 class CreateReviewRequest(BaseModel):
-    booking_id: UUID
     rating: int = Field(..., ge=1, le=5)
     comment: Optional[str] = None
 
+
 class ReviewResponse(BaseModel):
     review_id: UUID
+    booking_id: UUID
+    job_id: UUID
+    worker_id: UUID
+    customer_id: UUID
     customer_name: str
     rating: int
     comment: Optional[str] = None

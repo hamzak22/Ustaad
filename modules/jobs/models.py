@@ -2,6 +2,7 @@ from pydantic import BaseModel, Field
 from uuid import UUID
 from enum import Enum
 from typing import Optional
+from datetime import datetime
 
 
 class JobType(Enum):
@@ -29,7 +30,7 @@ class CreateJobResponseModel(BaseModel) :
     job_id : UUID = Field(..., description="The ID of the created job")
 
 class JobData(BaseModel) :
-    job_id : str
+    job_id : UUID
     client_name : str
     job_title : str 
     job_description : str
@@ -38,6 +39,7 @@ class JobData(BaseModel) :
     service_name : str
 
 class ClientJobResponse(BaseModel) :
+    job_id : UUID
     job_title : str 
     job_description : str
     job_location : str
@@ -49,6 +51,23 @@ class ClientJobResponse(BaseModel) :
 
 class JobFeedData(BaseModel) :
     job_data : list[JobData]
+
+
+class WorkerActiveJobData(BaseModel):
+    booking_id: UUID
+    job_id: UUID
+    job_title: str
+    job_description: str
+    job_location: str
+    city: str
+    price: float
+    service_name: str
+    client_id: UUID
+    client_name: str
+    booking_status: str
+    job_status: str
+    eta: str
+    created_at: datetime
 
 class ClientJobResponseData(BaseModel) :
     message : str = "Jobs fetched successfully"

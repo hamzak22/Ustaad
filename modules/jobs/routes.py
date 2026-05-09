@@ -15,6 +15,7 @@ from .models import (
     UnsaveJobResponseModel,
     SavedJobsResponseModel,
     SavedJobData,
+    WorkerActiveJobData,
 )
 from database import get_db_connection
 
@@ -191,6 +192,15 @@ async def create_job(data : CreateJobModel, conn : AsyncConnection = Depends(get
                     if not data.target_worker :
                         raise HTTPException(status_code=400, detail="Target worker must be specified for direct jobs")
                     
+                    # NEW: Validate that target_worker exists and has Worker role
+                    await cur.execute(
+                        "SELECT u.user_id FROM Users u JOIN worker_profile wp ON wp.worker_id = u.user_id WHERE u.user_id = %s AND u.role = 'Worker'",
+                        (str(data.target_worker),)
+                    )
+                    worker_check = await cur.fetchone()
+                    if not worker_check:
+                        raise HTTPException(status_code=400, detail="Target worker does not exist or is not a valid worker.")
+                    
                     await cur.execute(query_direct, (data.service_id, data.title, data.description, data.job_type.value, "Open", data.location, data.city, data.budget, user_id, data.target_worker,))
 
                 job_row = await cur.fetchone()
@@ -351,7 +361,7 @@ async def get_job_feed(
 
             job_data = [
                 JobData(
-                    job_id=str(row["job_id"]),
+                    job_id=row["job_id"],
                     client_name=row["client_name"],
                     job_title=row["job_title"],
                     job_description=row["job_description"],
@@ -368,6 +378,72 @@ async def get_job_feed(
     except Exception as e:
         print(e)
         raise HTTPException(status_code=500, detail="An error occurred while fetching the job feed")
+
+
+@router.get("/working", response_model=list[WorkerActiveJobData])
+async def get_worker_active_jobs(
+    conn: AsyncConnection = Depends(get_db_connection),
+    user_id: str = Depends(get_current_user_id),
+):
+    try:
+        # ensure worker profile exists
+        await _ensure_worker_profile(conn, user_id)
+
+        query = """
+            SELECT
+                b.booking_id,
+                j.job_id,
+                j.title AS job_title,
+                j.description AS job_description,
+                j.location_address AS job_location,
+                j.city,
+                COALESCE(b.agreed_price, j.estimated_budget, 0) AS price,
+                s.service_name,
+                j.client_id,
+                c.full_name AS client_name,
+                b.status AS booking_status,
+                j.status AS job_status,
+                b.eta,
+                b.created_at
+            FROM Bookings b
+            JOIN Jobs j ON b.job_id = j.job_id
+            JOIN Users c ON j.client_id = c.user_id
+            JOIN Services s ON j.service_id = s.service_id
+            WHERE b.worker_id = %s
+              AND (b.status = 'Scheduled' OR j.status = 'In Progress')
+            ORDER BY b.created_at DESC
+        """
+
+        async with conn.cursor() as cur:
+            await cur.execute(query, (user_id,))
+            rows = await cur.fetchall()
+
+            results = [
+                WorkerActiveJobData(
+                    booking_id=row["booking_id"],
+                    job_id=row["job_id"],
+                    job_title=row["job_title"],
+                    job_description=row["job_description"],
+                    job_location=row["job_location"],
+                    city=row["city"],
+                    price=float(row["price"]),
+                    service_name=row["service_name"],
+                    client_id=row["client_id"],
+                    client_name=row["client_name"],
+                    booking_status=row["booking_status"],
+                    job_status=row["job_status"],
+                    eta=row["eta"],
+                    created_at=row["created_at"],
+                )
+                for row in rows
+            ]
+
+            return results
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(e)
+        raise HTTPException(status_code=500, detail="An error occurred while fetching active jobs for worker")
     
 #Get all jobs created by authenticated client
 @router.get("/my-jobs", response_model=ClientJobResponseData)
@@ -377,6 +453,7 @@ async def get_all_jobs_created_by_me(
 ):
     query = """
         SELECT
+        j.job_id,
             j.title AS job_title,
             j.description AS job_description,
             COALESCE(j.estimated_budget, 0) AS job_budget,
@@ -398,6 +475,7 @@ async def get_all_jobs_created_by_me(
 
             jobs = [
                 {
+                    "job_id":row["job_id"],
                     "job_title": row["job_title"],
                     "job_description": row["job_description"],
                     "job_budget": float(row["job_budget"]),

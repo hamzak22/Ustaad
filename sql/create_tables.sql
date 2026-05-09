@@ -63,47 +63,67 @@ CREATE TABLE IF NOT EXISTS Jobs (
     ) 
 );
 
-CREATE TABLE Locations (
+CREATE TABLE IF NOT EXISTS Locations (
+
+CREATE TABLE IF NOT EXISTS Bid_Attached_Reviews (
+    bid_id UUID NOT NULL REFERENCES Bids(bid_id) ON DELETE CASCADE,
+    review_id UUID NOT NULL REFERENCES Reviews(review_id) ON DELETE CASCADE,
+    PRIMARY KEY (bid_id, review_id)
+);
     location_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     location_name VARCHAR(100) NOT NULL UNIQUE
 );
 
-CREATE TABLE Bids (
+CREATE TABLE IF NOT EXISTS Bids (
     bid_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     job_id UUID NOT NULL REFERENCES Jobs(job_id) ON DELETE CASCADE,
     worker_id UUID NOT NULL REFERENCES worker_profile(worker_id),
     proposed_price NUMERIC(10, 2) NOT NULL,
+    fee_type fee_type_enum NOT NULL DEFAULT 'Flat',
     eta VARCHAR(100) NOT NULL,            -- could be 1 hour or 2 days
-    description TEXT,                     -- Optional comments 
+    description TEXT,                     -- Optional comments / cover letter
     status VARCHAR(20) DEFAULT 'Pending' CHECK (status IN ('Pending', 'Accepted', 'Rejected')),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     UNIQUE (job_id, worker_id)            
 );
 
-CREATE TABLE Bookings (
+CREATE TABLE IF NOT EXISTS Bid_Attached_Reviews (
+    bid_id UUID NOT NULL REFERENCES Bids(bid_id) ON DELETE CASCADE,
+    review_id UUID NOT NULL REFERENCES Reviews(review_id) ON DELETE CASCADE,
+    PRIMARY KEY (bid_id, review_id)
+);
+
+CREATE TABLE IF NOT EXISTS Bookings (
     booking_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     job_id UUID NOT NULL UNIQUE REFERENCES Jobs(job_id),
     worker_id UUID NOT NULL REFERENCES worker_profile(worker_id),
     agreed_price NUMERIC(10, 2) NOT NULL,
     eta VARCHAR(100) NOT NULL,
-    status VARCHAR(20) DEFAULT 'Scheduled' CHECK (status IN ('Scheduled', 'Completed', 'Cancelled')),
+    status VARCHAR(20) DEFAULT 'Scheduled' CHECK (status IN ('Scheduled', 'In Progress', 'Completed', 'Cancelled')),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
   );
 
 
-CREATE TABLE Saved_Jobs(
+CREATE TABLE IF NOT EXISTS Saved_Jobs(
 	id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
 	job_id UUID NOT NULL references jobs(job_id),
 	worker_id UUID NOT NULL references worker_profile(worker_id),
-	status TEXT Default 'SAVED',
 
 	CONSTRAINT unique_saved_job UNIQUE(job_id, worker_id)
 );
 
+CREATE TABLE IF NOT EXISTS Direct_Job_Responses (
+	id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+	job_id UUID NOT NULL REFERENCES Jobs(job_id) ON DELETE CASCADE,
+	worker_id UUID NOT NULL REFERENCES worker_profile(worker_id) ON DELETE CASCADE,
+	response_status VARCHAR(20) NOT NULL CHECK (response_status IN ('Accepted', 'Declined')),
+	responded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+	CONSTRAINT unique_direct_response UNIQUE(job_id, worker_id)
 );
 
 
-CREATE TABLE Reviews (
+
+CREATE TABLE IF NOT EXISTS Reviews (
     review_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     booking_id UUID NOT NULL UNIQUE REFERENCES Bookings(booking_id) ON DELETE CASCADE,
     job_id UUID NOT NULL REFERENCES Jobs(job_id) ON DELETE CASCADE,
