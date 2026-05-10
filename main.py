@@ -45,6 +45,19 @@ async def Lifespan(app:FastAPI) :
 
 app = FastAPI(lifespan=Lifespan)
 
+allowed_origins = [
+    "http://localhost:5173",
+    "https://ustaad-frontend.vercel.app"
+]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=allowed_origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 
 app.include_router(auth_router, prefix="/api")
 app.include_router(services_router, prefix="/api")
@@ -56,18 +69,7 @@ app.include_router(reviews_router, prefix="/api")
 app.include_router(notifications_router, prefix="/api")
 
 
-allowed_origins = [
-    "http://localhost:5173",
-    "https://ustaad-frontend.vercel.app/"
-]
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=allowed_origins,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
 
 
 
