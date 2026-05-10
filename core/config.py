@@ -5,9 +5,7 @@ class Settings(BaseSettings) :
     SECRET_KEY : str
     ALGORITHM : str
     TOKEN_EXPIRATION_MINUTES: int
-    DB_USERNAME: str
-    DB_PASSWORD : str
-    DB_HOST : str
+    DB_URL : str 
 
     model_config = SettingsConfigDict(env_file='.env')
 

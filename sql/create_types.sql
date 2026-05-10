@@ -7,4 +7,15 @@ CREATE TYPE job_status_enum AS ENUM ('Open', 'In Progress', 'Completed', 'Cancel
 CREATE TYPE bid_status_enum AS ENUM ('Pending', 'Accepted', 'Rejected');
 CREATE TYPE booking_status_enum AS ENUM ('Scheduled', 'In Progress', 'Completed', 'Cancelled');
 CREATE TYPE fee_type_enum AS ENUM ('Hourly', 'Flat');
+CREATE TYPE notification_type_enum AS ENUM (
+	'job_created',
+	'bid_placed',
+	'booking_scheduled',
+	'booking_started',
+	'direct_invite_declined',
+	'booking_completed',
+	'booking_cancelled',
+	'review_left',
+	'profile_updated'
+);
 

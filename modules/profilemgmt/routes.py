@@ -7,6 +7,8 @@ from fastapi.security import OAuth2PasswordBearer
 from jwt.exceptions import InvalidTokenError
 from modules.auth.token_generator import SECRET_KEY, ALGORITHM
 from database import get_db_connection
+from modules.notifications.models import NotificationCreate
+from modules.notifications.service import persist_notification, broadcast_notification
 
 from modules.profilemgmt.models import (
     UpdateWorkerProfileRequest, 
@@ -108,6 +110,7 @@ async def update_worker_profile(
     # 2. Begin Transaction for Updates
     try:
         async with conn.transaction():
+            notification = None
             async with conn.cursor() as cur:
                 
                 # Update Phone Number in Users table
@@ -119,7 +122,6 @@ async def update_worker_profile(
 
                 # Update Bio in worker_profile table
                 if update_data.bio is not None:
-                    # FIX: We use a simple UPDATE now. The profile MUST exist already.
                     await cur.execute("""
                         UPDATE worker_profile 
                         SET bio = %s 
@@ -140,6 +142,27 @@ async def update_worker_profile(
                             DO UPDATE SET hourly_rate = EXCLUDED.hourly_rate
                         """, (user_id, str(service.service_id), service.hourly_rate))
 
+                notification = await persist_notification(
+                    conn,
+                    NotificationCreate(
+                        recipient_id=user_id,
+                        actor_id=user_id,
+                        notification_type="profile_updated",
+                        title="Worker profile updated",
+                        body="Your worker profile details were updated successfully.",
+                        entity_type="worker_profile",
+                        entity_id=None,
+                        metadata={
+                            "bio_updated": update_data.bio is not None,
+                            "phone_updated": update_data.phone_number is not None,
+                            "services_updated": update_data.services is not None,
+                        },
+                    ),
+                )
+
+        if notification:
+            await broadcast_notification(notification)
+
         return {"message": "Worker profile updated successfully!"}
         
     except psycopg.errors.UniqueViolation:
@@ -147,12 +170,11 @@ async def update_worker_profile(
     except psycopg.errors.ForeignKeyViolation:
         raise HTTPException(status_code=400, detail="One of the provided service IDs does not exist.")
     except Exception as e:
-        # Catch other random DB errors
         raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
 
 
 # ============================================================================
-# WORKER SEARCH ENDPOINTS (For Customers)
+# WORKER SEARCH ENDPOINTS (For Customers) - CLEAN IMPLEMENTATION
 # ============================================================================
 
 @router.post("/workers/search", response_model=WorkerSearchResponse)
@@ -161,121 +183,121 @@ async def search_workers(
     conn: psycopg.AsyncConnection = Depends(get_db_connection)
 ):
     """
-    Search for available workers based on various criteria.
-    
-    This endpoint allows customers to search for workers by:
-    - Service/skill (service_id)
-    - City/location
-    - Minimum rating
-    - Availability status
-    - Text search (name or bio)
-    
-    Supports pagination via limit and offset parameters.
+    Search for available workers with optional filters.
+    Returns one worker profile per worker with aggregated skills in a list.
     """
     async with conn.cursor() as cur:
         try:
-            # Build dynamic SQL based on provided filters
+            # Build params list in the order they appear in the query
+            params = []
+            
+            # Relevance params come FIRST (they appear in SELECT clause)
             if search_params.search_query:
-                # Use text search query
-                query = """
-                    SELECT 
-                        u.user_id,
-                        u.full_name,
-                        u.email,
-                        u.phone_number,
-                        u.city,
-                        wp.worker_id,
-                        wp.experience,
-                        wp.availability_status,
-                        wp.bio,
-                        wp.average_rating,
-                        wp.total_reviews,
-                        ws.service_id,
-                        s.service_name,
-                        ws.hourly_rate,
-                        CASE 
-                            WHEN LOWER(u.full_name) = LOWER(%s) THEN 3
-                            WHEN LOWER(u.full_name) LIKE LOWER(%s || '%%') THEN 2
-                            WHEN LOWER(u.full_name) ILIKE %s THEN 1
-                            ELSE 0
-                        END AS relevance_score
-                    FROM Users u
-                    JOIN worker_profile wp ON u.user_id = wp.worker_id
-                    JOIN worker_skills ws ON wp.worker_id = ws.worker_id
-                    JOIN Services s ON ws.service_id = s.service_id
-                    WHERE 
-                        u.is_active = true
-                        AND (LOWER(u.full_name) ILIKE %s OR LOWER(wp.bio) ILIKE %s)
-                        AND (ws.service_id = %s OR %s IS NULL)
-                    ORDER BY relevance_score DESC, wp.average_rating DESC
-                    LIMIT %s OFFSET %s
-                """
-                search_pattern = '%' + search_params.search_query + '%'
-                await cur.execute(
-                    query,
-                    (
-                        search_params.search_query,
-                        search_params.search_query,
-                        search_params.search_query,
-                        search_pattern,
-                        search_pattern,
-                        search_params.service_id,
-                        search_params.service_id,
-                        search_params.limit,
-                        search_params.offset
-                    )
-                )
-            else:
-                # Use structured filters search
-                query = """
-                    SELECT DISTINCT ON (wp.worker_id)
-                        u.user_id,
-                        u.full_name,
-                        u.email,
-                        u.phone_number,
-                        u.city,
-                        wp.worker_id,
-                        wp.experience,
-                        wp.availability_status,
-                        wp.bio,
-                        wp.average_rating,
-                        wp.total_reviews,
-                        ws.service_id,
-                        s.service_name,
-                        ws.hourly_rate
-                    FROM Users u
-                    JOIN worker_profile wp ON u.user_id = wp.worker_id
-                    JOIN worker_skills ws ON wp.worker_id = ws.worker_id
-                    JOIN Services s ON ws.service_id = s.service_id
-                    WHERE 
-                        u.is_active = true
-                        AND (ws.service_id = %s OR %s IS NULL)
-                        AND (u.city = %s OR %s IS NULL)
-                        AND wp.average_rating >= %s
-                        AND (wp.availability_status = %s OR %s IS NULL)
-                    ORDER BY wp.worker_id, wp.average_rating DESC
-                    LIMIT %s OFFSET %s
-                """
-                await cur.execute(
-                    query,
-                    (
-                        search_params.service_id,
-                        search_params.service_id,
-                        search_params.city,
-                        search_params.city,
-                        search_params.min_rating or 0,
-                        search_params.availability_status,
-                        search_params.availability_status,
-                        search_params.limit,
-                        search_params.offset
-                    )
-                )
-
+                params.extend([
+                    search_params.search_query,
+                    search_params.search_query,
+                    search_params.search_query
+                ])
+            
+            # Build WHERE conditions
+            conditions = ["u.is_active = true"]
+            
+            # Text search
+            if search_params.search_query:
+                pattern = f"%{search_params.search_query}%"
+                conditions.append("(LOWER(u.full_name) ILIKE %s OR LOWER(wp.bio) ILIKE %s)")
+                params.extend([pattern, pattern])
+            
+            # Service filter
+            if search_params.service_id:
+                conditions.append("ws.service_id = %s::uuid")
+                params.append(search_params.service_id)
+            
+            # City filter
+            if search_params.city:
+                conditions.append("u.city = %s")
+                params.append(search_params.city)
+            
+            # Availability filter
+            if search_params.availability:
+                conditions.append("wp.availability::text = %s")
+                params.append(search_params.availability)
+            
+            # Rating filter (always included)
+            conditions.append("wp.average_rating >= %s")
+            params.append(search_params.min_rating or 0.0)
+            
+            where_clause = " AND ".join(conditions)
+            
+            # Build relevance score clause if doing text search
+            relevance_clause = ""
+            if search_params.search_query:
+                relevance_clause = """,
+                    CASE 
+                        WHEN LOWER(u.full_name) = LOWER(%s) THEN 3
+                        WHEN LOWER(u.full_name) LIKE LOWER(%s || '%%') THEN 2
+                        WHEN LOWER(u.full_name) ILIKE %s THEN 1
+                        ELSE 0
+                    END AS relevance_score"""
+            
+            # Add pagination (at the end)
+            params.extend([search_params.limit, search_params.offset])
+            
+            # Build query with optional relevance score
+            order_by = "relevance_score DESC, wp.average_rating DESC" if search_params.search_query else "wp.average_rating DESC"
+            
+            query = f"""
+                SELECT 
+                    u.user_id,
+                    u.full_name,
+                    u.email,
+                    u.phone_number,
+                    u.city,
+                    wp.worker_id,
+                    wp.experience,
+                    wp.availability,
+                    wp.bio,
+                    wp.average_rating,
+                    (SELECT COALESCE(COUNT(*), 0) FROM reviews WHERE worker_id = wp.worker_id) AS total_reviews,
+                    COALESCE(
+                        json_agg(
+                            json_build_object(
+                                'service_id', ws.service_id,
+                                'service_name', s.service_name,
+                                'hourly_rate', ws.hourly_rate
+                            ) ORDER BY s.service_name
+                        ) FILTER (WHERE ws.service_id IS NOT NULL),
+                        '[]'::json
+                    ) AS skills
+                    {relevance_clause}
+                FROM users u
+                JOIN worker_profile wp ON u.user_id = wp.worker_id
+                LEFT JOIN worker_skills ws ON wp.worker_id = ws.worker_id
+                LEFT JOIN services s ON ws.service_id = s.service_id
+                WHERE {where_clause}
+                GROUP BY u.user_id, u.full_name, u.email, u.phone_number, u.city,
+                         wp.worker_id, wp.experience, wp.availability, wp.bio, wp.average_rating
+                ORDER BY {order_by}
+                LIMIT %s OFFSET %s
+            """
+            
+            await cur.execute(query, params)
             rows = await cur.fetchall()
             
-            # Transform rows to WorkerSearchResultItem objects
-            workers = [
-                WorkerSearchResultItem(
+            workers = []
+            for row in rows:
+                # Parse aggregated skills from JSON array
+                skills_json = row["skills"] or []
+                skills = [
+                    WorkerSkillInfo(
+                        service_id=skill["service_id"],
+                        service_name=skill["service_name"],
+                        hourly_rate=float(skill["hourly_rate"])
+                    )
+                    for skill in skills_json
+                ]
+                
+                workers.append(WorkerSearchResultItem(
                     user_id=row["user_id"],
                     full_name=row["full_name"],
                     email=row["email"],
@@ -283,16 +305,12 @@ async def search_workers(
                     city=row["city"],
                     worker_id=row["worker_id"],
                     experience=row["experience"],
-                    availability_status=row["availability_status"],
+                    availability=row["availability"],
                     bio=row["bio"],
                     average_rating=float(row["average_rating"]),
                     total_reviews=row["total_reviews"],
-                    service_id=row["service_id"],
-                    service_name=row["service_name"],
-                    hourly_rate=float(row["hourly_rate"])
-                )
-                for row in rows
-            ]
+                    skills=skills
+                ))
             
             return WorkerSearchResponse(
                 limit=search_params.limit,
@@ -309,20 +327,10 @@ async def get_worker_detail(
     worker_id: str,
     conn: psycopg.AsyncConnection = Depends(get_db_connection)
 ):
-    """
-    Get detailed profile of a specific worker.
-    
-    This endpoint returns:
-    - Complete worker profile information
-    - All skills with hourly rates
-    - Recent reviews and ratings
-    - Work history summary
-    
-    Accessible to all authenticated customers (no auth required for view).
-    """
+    """Get complete profile for a specific worker including skills and recent reviews."""
     async with conn.cursor() as cur:
         try:
-            # Fetch worker profile with skills
+            # Get worker profile with aggregated skills
             await cur.execute("""
                 SELECT 
                     u.user_id,
@@ -333,124 +341,122 @@ async def get_worker_detail(
                     u.created_at,
                     wp.worker_id,
                     wp.experience,
-                    wp.availability_status,
+                    wp.availability,
                     wp.bio,
                     wp.average_rating,
-                    wp.total_reviews
-                FROM Users u
+                    (SELECT COALESCE(COUNT(*), 0) FROM reviews WHERE worker_id = wp.worker_id) AS total_reviews,
+                    COALESCE(
+                        json_agg(
+                            json_build_object(
+                                'service_id', ws.service_id,
+                                'service_name', s.service_name,
+                                'hourly_rate', ws.hourly_rate
+                            ) ORDER BY s.service_name
+                        ) FILTER (WHERE ws.service_id IS NOT NULL),
+                        '[]'::json
+                    ) AS skills
+                FROM users u
                 JOIN worker_profile wp ON u.user_id = wp.worker_id
-                WHERE 
-                    wp.worker_id = %s
-                    AND u.is_active = true
+                LEFT JOIN worker_skills ws ON wp.worker_id = ws.worker_id
+                LEFT JOIN services s ON ws.service_id = s.service_id
+                WHERE wp.worker_id = %s::uuid AND u.is_active = true
+                GROUP BY u.user_id, u.full_name, u.email, u.phone_number, u.city, u.created_at,
+                         wp.worker_id, wp.experience, wp.availability, wp.bio, wp.average_rating
             """, (worker_id,))
             
-            worker_row = await cur.fetchone()
-            if not worker_row:
-                raise HTTPException(status_code=404, detail="Worker not found or is inactive")
+            profile_row = await cur.fetchone()
+            if not profile_row:
+                raise HTTPException(status_code=404, detail="Worker not found")
             
-            # Fetch worker skills
+            # Get recent reviews
             await cur.execute("""
                 SELECT 
-                    s.service_id,
-                    s.service_name,
-                    ws.hourly_rate
-                FROM worker_skills ws
-                JOIN Services s ON ws.service_id = s.service_id
-                WHERE ws.worker_id = %s
-                ORDER BY s.service_name ASC
+                    r.review_id,
+                    r.rating,
+                    r.comment,
+                    r.created_at,
+                    u.full_name AS customer_name,
+                    j.title AS job_title
+                FROM reviews r
+                JOIN jobs j ON r.job_id = j.job_id
+                JOIN users u ON r.customer_id = u.user_id
+                WHERE r.worker_id = %s::uuid
+                ORDER BY r.created_at DESC
+                LIMIT 10
             """, (worker_id,))
             
-            skills_rows = await cur.fetchall()
+            review_rows = await cur.fetchall()
+            reviews = [
+                WorkerReviewItem(
+                    review_id=row["review_id"],
+                    rating=row["rating"],
+                    comment=row["comment"],
+                    created_at=str(row["created_at"]),
+                    customer_name=row["customer_name"],
+                    job_title=row["job_title"]
+                )
+                for row in review_rows
+            ]
+            
+            # Parse skills
+            skills_json = profile_row["skills"] or []
             skills = [
                 WorkerSkillInfo(
                     service_id=skill["service_id"],
                     service_name=skill["service_name"],
                     hourly_rate=float(skill["hourly_rate"])
                 )
-                for skill in skills_rows
-            ]
-            
-            # Fetch recent reviews
-            await cur.execute("""
-                SELECT 
-                    r.review_id,
-                    r.rating,
-                    r.comment,
-                    r.created_at,
-                    u.full_name AS customer_name,
-                    j.title AS job_title
-                FROM Reviews r
-                JOIN Jobs j ON r.job_id = j.job_id
-                JOIN Users u ON r.customer_id = u.user_id
-                WHERE r.worker_id = %s
-                ORDER BY r.created_at DESC
-                LIMIT 10
-            """, (worker_id,))
-            
-            reviews_rows = await cur.fetchall()
-            recent_reviews = [
-                WorkerReviewItem(
-                    review_id=review["review_id"],
-                    rating=review["rating"],
-                    comment=review["comment"],
-                    created_at=str(review["created_at"]),
-                    customer_name=review["customer_name"],
-                    job_title=review["job_title"]
-                )
-                for review in reviews_rows
+                for skill in skills_json
             ]
             
             return WorkerDetailedProfile(
-                user_id=worker_row["user_id"],
-                full_name=worker_row["full_name"],
-                email=worker_row["email"],
-                phone_number=worker_row["phone_number"],
-                city=worker_row["city"],
-                created_at=str(worker_row["created_at"]),
-                worker_id=worker_row["worker_id"],
-                experience=worker_row["experience"],
-                availability_status=worker_row["availability_status"],
-                bio=worker_row["bio"],
-                average_rating=float(worker_row["average_rating"]),
-                total_reviews=worker_row["total_reviews"],
+                user_id=profile_row["user_id"],
+                full_name=profile_row["full_name"],
+                email=profile_row["email"],
+                phone_number=profile_row["phone_number"],
+                city=profile_row["city"],
+                created_at=str(profile_row["created_at"]),
+                worker_id=profile_row["worker_id"],
+                experience=profile_row["experience"],
+                availability=profile_row["availability"],
+                bio=profile_row["bio"],
+                average_rating=float(profile_row["average_rating"]),
+                total_reviews=profile_row["total_reviews"],
                 skills=skills,
-                recent_reviews=recent_reviews
+                recent_reviews=reviews
             )
             
         except HTTPException:
             raise
         except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Error fetching worker details: {str(e)}")
+            raise HTTPException(status_code=500, detail=f"Profile error: {str(e)}")
 
 
-@router.get("/workers/{worker_id}/reviews", response_model=list[WorkerReviewItem])
+@router.get("/workers/{worker_id}/reviews")
 async def get_worker_reviews(
     worker_id: str,
     limit: int = 20,
     offset: int = 0,
     conn: psycopg.AsyncConnection = Depends(get_db_connection)
 ):
-    """
-    Get paginated reviews for a specific worker.
-    
-    Returns the most recent reviews with pagination support.
-    """
-    if limit < 1 or limit > 100:
-        raise HTTPException(status_code=400, detail="limit must be between 1 and 100")
-    if offset < 0:
-        raise HTTPException(status_code=400, detail="offset must be >= 0")
-    
+    """Get paginated reviews for a specific worker."""
     async with conn.cursor() as cur:
         try:
+            # Validate parameters
+            if limit < 1 or limit > 100:
+                raise HTTPException(status_code=400, detail="Limit must be between 1 and 100")
+            if offset < 0:
+                raise HTTPException(status_code=400, detail="Offset must be >= 0")
+            
             # Verify worker exists
             await cur.execute(
-                "SELECT worker_id FROM worker_profile WHERE worker_id = %s",
+                "SELECT worker_id FROM worker_profile WHERE worker_id = %s::uuid",
                 (worker_id,)
             )
             if not await cur.fetchone():
                 raise HTTPException(status_code=404, detail="Worker not found")
             
-            # Fetch reviews
+            # Get reviews
             await cur.execute("""
                 SELECT 
                     r.review_id,
@@ -459,28 +465,28 @@ async def get_worker_reviews(
                     r.created_at,
                     u.full_name AS customer_name,
                     j.title AS job_title
-                FROM Reviews r
-                JOIN Jobs j ON r.job_id = j.job_id
-                JOIN Users u ON r.customer_id = u.user_id
-                WHERE r.worker_id = %s
+                FROM reviews r
+                JOIN jobs j ON r.job_id = j.job_id
+                JOIN users u ON r.customer_id = u.user_id
+                WHERE r.worker_id = %s::uuid
                 ORDER BY r.created_at DESC
                 LIMIT %s OFFSET %s
             """, (worker_id, limit, offset))
             
-            reviews_rows = await cur.fetchall()
+            rows = await cur.fetchall()
             return [
                 WorkerReviewItem(
-                    review_id=review["review_id"],
-                    rating=review["rating"],
-                    comment=review["comment"],
-                    created_at=str(review["created_at"]),
-                    customer_name=review["customer_name"],
-                    job_title=review["job_title"]
+                    review_id=row["review_id"],
+                    rating=row["rating"],
+                    comment=row["comment"],
+                    created_at=str(row["created_at"]),
+                    customer_name=row["customer_name"],
+                    job_title=row["job_title"]
                 )
-                for review in reviews_rows
+                for row in rows
             ]
             
         except HTTPException:
             raise
         except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Error fetching reviews: {str(e)}")
+            raise HTTPException(status_code=500, detail=f"Reviews error: {str(e)}")

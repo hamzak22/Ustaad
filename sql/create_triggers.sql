@@ -18,23 +18,42 @@ AFTER INSERT OR UPDATE OF status ON Bookings
 FOR EACH ROW EXECUTE FUNCTION sync_job_status_from_booking();
 
 
--- Trigger 2: Auto-update worker ratings when a Review is posted
+-- Trigger 2: Auto-update worker ratings when a Review is posted, updated, or deleted
 CREATE OR REPLACE FUNCTION update_worker_rating()
 RETURNS TRIGGER AS $$
 DECLARE
     v_worker_id UUID;
+    v_new_avg_rating NUMERIC;
 BEGIN
     IF TG_OP = 'DELETE' THEN
         v_worker_id := OLD.worker_id;
-    ELSE
+        
+        -- Decrement total_reviews and recalculate average
+        UPDATE worker_profile
+        SET 
+            total_reviews = GREATEST(0, total_reviews - 1),
+            average_rating = COALESCE((SELECT ROUND(AVG(rating), 2) FROM Reviews WHERE worker_id = v_worker_id), 0.00)
+        WHERE worker_id = v_worker_id;
+        
+    ELSIF TG_OP = 'INSERT' THEN
         v_worker_id := NEW.worker_id;
+        
+        -- Increment total_reviews and recalculate average
+        UPDATE worker_profile
+        SET 
+            total_reviews = total_reviews + 1,
+            average_rating = COALESCE((SELECT ROUND(AVG(rating), 2) FROM Reviews WHERE worker_id = v_worker_id), 0.00)
+        WHERE worker_id = v_worker_id;
+        
+    ELSIF TG_OP = 'UPDATE' THEN
+        v_worker_id := NEW.worker_id;
+        
+        -- Only recalculate average rating (total_reviews stays the same)
+        UPDATE worker_profile
+        SET 
+            average_rating = COALESCE((SELECT ROUND(AVG(rating), 2) FROM Reviews WHERE worker_id = v_worker_id), 0.00)
+        WHERE worker_id = v_worker_id;
     END IF;
-
-    UPDATE worker_profile
-    SET 
-        average_rating = COALESCE((SELECT ROUND(AVG(rating), 2) FROM Reviews WHERE worker_id = v_worker_id), 0.00),
-        total_reviews = (SELECT COUNT(*) FROM Reviews WHERE worker_id = v_worker_id)
-    WHERE worker_id = v_worker_id;
 
     RETURN NULL; 
 END;

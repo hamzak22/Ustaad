@@ -20,6 +20,8 @@ from .models import (
 from database import get_db_connection
 
 from modules.auth.routes import get_current_user_id
+from modules.notifications.models import NotificationCreate
+from modules.notifications.service import persist_notification, broadcast_notification
 
 
 router = APIRouter(
@@ -176,6 +178,7 @@ async def get_saved_jobs(
 async def create_job(data : CreateJobModel, conn : AsyncConnection = Depends(get_db_connection), user_id : str = Depends(get_current_user_id)) :
     try :
         async with conn.transaction() :
+            notifications = []
             async with conn.cursor() as cur :
                 query_public = """INSERT INTO Jobs(service_id, title,description,job_type,status, location_address, city, estimated_budget, client_id) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING job_id"""
 
@@ -211,9 +214,65 @@ async def create_job(data : CreateJobModel, conn : AsyncConnection = Depends(get
                 job_id = job_row["job_id"]
                 print(job_id)
 
-                return CreateJobResponseModel(
-                    job_id=job_id
-                )
+                if data.job_type == JobType.PUBLIC:
+                    await cur.execute(
+                        """
+                        SELECT DISTINCT u.user_id
+                        FROM worker_skills ws
+                        JOIN Users u ON u.user_id = ws.worker_id
+                        WHERE ws.service_id = %s
+                          AND u.city = %s
+                          AND u.is_active = true
+                          AND u.role = 'Worker'
+                        """,
+                        (str(data.service_id), data.city),
+                    )
+                    workers = await cur.fetchall()
+                    for worker in workers:
+                        notifications.append(
+                            await persist_notification(
+                                conn,
+                                NotificationCreate(
+                                    recipient_id=worker["user_id"],
+                                    actor_id=UUID(user_id),
+                                    notification_type="job_created",
+                                    title="New job available",
+                                    body=f"A new job '{data.title}' was posted in {data.city}.",
+                                    entity_type="job",
+                                    entity_id=job_id,
+                                    metadata={
+                                        "service_id": str(data.service_id),
+                                        "city": data.city,
+                                    },
+                                ),
+                            )
+                        )
+                else:
+                    notifications.append(
+                        await persist_notification(
+                            conn,
+                            NotificationCreate(
+                                recipient_id=UUID(str(data.target_worker)),
+                                actor_id=UUID(user_id),
+                                notification_type="job_created",
+                                title="You have a direct job invitation",
+                                body=f"You were invited to a direct job: '{data.title}'.",
+                                entity_type="job",
+                                entity_id=job_id,
+                                metadata={
+                                    "service_id": str(data.service_id),
+                                    "city": data.city,
+                                },
+                            ),
+                        )
+                    )
+
+        for notification in notifications:
+            await broadcast_notification(notification)
+
+        return CreateJobResponseModel(
+            job_id=job_id
+        )
     except HTTPException:
         raise
     except Exception as e :

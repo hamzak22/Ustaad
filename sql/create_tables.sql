@@ -134,6 +134,27 @@ CREATE TABLE IF NOT EXISTS Reviews (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS Notifications (
+    notification_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    recipient_id UUID NOT NULL REFERENCES Users(user_id) ON DELETE CASCADE,
+    actor_id UUID REFERENCES Users(user_id) ON DELETE SET NULL,
+    notification_type notification_type_enum NOT NULL,
+    title VARCHAR(150) NOT NULL,
+    body TEXT NOT NULL,
+    entity_type VARCHAR(50),
+    entity_id UUID,
+    metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+    is_read BOOLEAN NOT NULL DEFAULT FALSE,
+    read_at TIMESTAMP,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_notifications_recipient_read_created
+    ON Notifications (recipient_id, is_read, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_notifications_recipient_created
+    ON Notifications (recipient_id, created_at DESC);
+
 ALTER TABLE worker_profile
 ADD COLUMN availability_status VARCHAR(20) DEFAULT 'Available' CHECK (availability_status IN ('Available', 'Busy', 'Offline'));
 

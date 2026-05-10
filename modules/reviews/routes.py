@@ -3,6 +3,8 @@ import psycopg
 from database import get_db_connection
 from modules.auth.routes import get_current_user_id 
 from modules.reviews.models import CreateReviewRequest, ReviewResponse
+from modules.notifications.models import NotificationCreate
+from modules.notifications.service import persist_notification, broadcast_notification
 from uuid import UUID
 
 router = APIRouter(tags=["Reviews"])
@@ -25,7 +27,8 @@ async def submit_review(
                     SELECT j.client_id AS client_id,
                            b.worker_id AS worker_id,
                            b.status AS booking_status,
-                           b.job_id AS job_id
+                           b.job_id AS job_id,
+                           j.title AS job_title
                     FROM Bookings b
                     JOIN Jobs j ON b.job_id = j.job_id
                     WHERE b.booking_id = %s
@@ -60,9 +63,27 @@ async def submit_review(
                 result = await cur.fetchone()
                 new_review_id = result["review_id"]
 
+                notification = await persist_notification(
+                    conn,
+                    NotificationCreate(
+                        recipient_id=UUID(str(booking_row["worker_id"])),
+                        actor_id=UUID(user_id),
+                        notification_type="review_left",
+                        title="New review received",
+                        body=f"A customer left a review for your job '{booking_row['job_title']}'.",
+                        entity_type="review",
+                        entity_id=UUID(str(new_review_id)),
+                        metadata={
+                            "booking_id": str(booking_id),
+                            "job_id": str(booking_row["job_id"]),
+                        },
+                    ),
+                )
+
                 # Rating aggregation is handled by the trigger in create_triggers.sql - no need to duplicate it here
 
-                return {"message": "Review submitted successfully!", "review_id": new_review_id}
+            await broadcast_notification(notification)
+            return {"message": "Review submitted successfully!", "review_id": new_review_id}
 
     except psycopg.errors.UniqueViolation:
         # The database catches if they try to review the same booking twice!

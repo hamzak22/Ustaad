@@ -15,6 +15,7 @@ from modules.locations import routes as locations_routes
 from modules.jobs.routes import router as jobs_router
 from modules.bids_bookings.routers import router as bids_bookings_router
 from modules.reviews.routes import router as reviews_router
+from modules.notifications.routes import router as notifications_router
 
 
 
@@ -25,7 +26,7 @@ from core.config import get_settings
 settings = get_settings() 
 
 
-DATABASE_URL = f"postgresql://{settings.DB_USERNAME}:{settings.DB_PASSWORD}@{settings.DB_HOST}:5432/ustaad_db"
+DATABASE_URL = settings.DB_URL
 
 
 @asynccontextmanager
@@ -33,6 +34,7 @@ async def Lifespan(app:FastAPI) :
     print("Initializing Database pool....")
 
     database.pool = AsyncConnectionPool(conninfo=DATABASE_URL, open=True, kwargs={"row_factory" : dict_row})
+    app.state.db_pool = database.pool
 
     yield
 
@@ -51,6 +53,7 @@ app.include_router(locations_routes.router, prefix="/api")
 app.include_router(jobs_router, prefix="/api")
 app.include_router(bids_bookings_router, prefix="/api")
 app.include_router(reviews_router, prefix="/api")
+app.include_router(notifications_router, prefix="/api")
 
 
 allowed_origins = [

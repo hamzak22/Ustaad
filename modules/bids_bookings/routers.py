@@ -2,6 +2,8 @@ from fastapi import APIRouter, Depends, HTTPException
 import psycopg
 from database import get_db_connection
 from modules.auth.routes import get_current_user_id
+from modules.notifications.models import NotificationCreate
+from modules.notifications.service import persist_notification, broadcast_notification
 from modules.bids_bookings.modules import CreateBidRequest, BidResponse, ProposalResponse, DirectJobResponseModel, CompleteBookingWithReviewRequest
 from modules.bids_bookings.modules import BookingResponse
 from modules.reviews.models import ReviewResponse
@@ -22,6 +24,7 @@ async def place_bid(
     try:
         # Transaction begins immediately
         async with conn.transaction():
+            notification = None
             async with conn.cursor() as cur:
                 await cur.execute("SELECT role AS role FROM Users WHERE user_id = %s", (user_id,))
                 role_row = await cur.fetchone()
@@ -29,7 +32,7 @@ async def place_bid(
                 if not role_row or role_row["role"] != 'Worker':
                     raise HTTPException(status_code=403, detail="Only workers can place bids.")
 
-                await cur.execute("SELECT client_id AS client_id, status AS status, job_type, target_worker FROM Jobs WHERE job_id = %s", (str(bid_data.job_id),))
+                await cur.execute("SELECT client_id AS client_id, title AS title, status AS status, job_type, target_worker FROM Jobs WHERE job_id = %s", (str(bid_data.job_id),))
                 job_row = await cur.fetchone()
                 
                 if not job_row:
@@ -64,7 +67,28 @@ async def place_bid(
 
                         await cur.execute("INSERT INTO Bid_Attached_Reviews (bid_id, review_id) VALUES (%s, %s) ON CONFLICT DO NOTHING", (new_bid_id, str(rev_id)))
 
-                return {"message": "Bid placed successfully!", "bid_id": new_bid_id}
+                notification = await persist_notification(
+                    conn,
+                    NotificationCreate(
+                        recipient_id=job_row["client_id"],
+                        actor_id=UUID(user_id),
+                        notification_type="bid_placed",
+                        title="New bid received",
+                        body=f"A worker placed a bid on your job '{job_row['title']}'.",
+                        entity_type="bid",
+                        entity_id=new_bid_id,
+                        metadata={
+                            "job_id": str(bid_data.job_id),
+                            "worker_id": user_id,
+                            "price": bid_data.proposed_price,
+                        },
+                    ),
+                )
+
+        if notification:
+            await broadcast_notification(notification)
+
+        return {"message": "Bid placed successfully!", "bid_id": new_bid_id}
                 
     except psycopg.errors.UniqueViolation:
         # If the worker already bid, the transaction automatically rolls back before hitting this block
@@ -256,7 +280,7 @@ async def decline_direct_invite(
             async with conn.cursor() as cur:
                 # Verify job is direct and assigned to this worker
                 await cur.execute(
-                    "SELECT job_type, target_worker FROM Jobs WHERE job_id = %s",
+                    "SELECT job_type, target_worker, client_id, title FROM Jobs WHERE job_id = %s",
                     (str(job_id),),
                 )
                 job_row = await cur.fetchone()
@@ -285,7 +309,22 @@ async def decline_direct_invite(
                 if not result:
                     raise HTTPException(status_code=500, detail="Failed to record decline.")
 
-                return {"message": "Direct job invitation declined successfully."}
+                notification = await persist_notification(
+                    conn,
+                    NotificationCreate(
+                        recipient_id=job_row["client_id"],
+                        actor_id=UUID(user_id),
+                        notification_type="direct_invite_declined",
+                        title="Direct job invitation declined",
+                        body=f"The worker declined your direct job invitation for '{job_row['title']}'.",
+                        entity_type="job",
+                        entity_id=job_id,
+                        metadata={"job_id": str(job_id), "worker_id": user_id},
+                    ),
+                )
+
+        await broadcast_notification(notification)
+        return {"message": "Direct job invitation declined successfully."}
 
     except HTTPException:
         raise
@@ -310,10 +349,52 @@ async def accept_bid(
                 await cur.execute("CALL assign_worker_to_request(%s, %s, NULL)", (str(bid_id), user_id))
                 result = await cur.fetchone()
 
-                return {
-                    "message": "Bid accepted and Contract created successfully!",
-                    "booking_id": result["p_booking_id"]
-                }
+                await cur.execute(
+                    """
+                    SELECT b.booking_id, b.worker_id, b.job_id, j.client_id, j.title
+                    FROM Bookings b
+                    JOIN Jobs j ON j.job_id = b.job_id
+                    WHERE b.booking_id = %s
+                    """,
+                    (str(result["p_booking_id"]),),
+                )
+                booking_row = await cur.fetchone()
+
+                worker_notification = await persist_notification(
+                    conn,
+                    NotificationCreate(
+                        recipient_id=booking_row["worker_id"],
+                        actor_id=UUID(user_id),
+                        notification_type="booking_scheduled",
+                        title="You have a new booking",
+                        body=f"Your bid was accepted for '{booking_row['title']}'.",
+                        entity_type="booking",
+                        entity_id=booking_row["booking_id"],
+                        metadata={"job_id": str(booking_row["job_id"]), "bid_id": str(bid_id)},
+                    ),
+                )
+
+                client_notification = await persist_notification(
+                    conn,
+                    NotificationCreate(
+                        recipient_id=booking_row["client_id"],
+                        actor_id=UUID(user_id),
+                        notification_type="booking_scheduled",
+                        title="Booking created",
+                        body=f"Your booking for '{booking_row['title']}' has been scheduled.",
+                        entity_type="booking",
+                        entity_id=booking_row["booking_id"],
+                        metadata={"job_id": str(booking_row["job_id"]), "bid_id": str(bid_id)},
+                    ),
+                )
+
+        await broadcast_notification(worker_notification)
+        await broadcast_notification(client_notification)
+
+        return {
+            "message": "Bid accepted and Contract created successfully!",
+            "booking_id": result["p_booking_id"]
+        }
             
     except psycopg.errors.RaiseException as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -330,6 +411,7 @@ async def complete_booking(
 ):
     try:
         async with conn.transaction():
+            notification = None
             async with conn.cursor() as cur:
                 await cur.execute(
                     """
@@ -338,7 +420,8 @@ async def complete_booking(
                            b.status AS booking_status,
                            j.job_id AS job_id,
                            j.status AS job_status,
-                           j.client_id AS client_id
+                           j.client_id AS client_id,
+                           j.title AS job_title
                     FROM Bookings b
                     JOIN Jobs j ON j.job_id = b.job_id
                     WHERE b.booking_id = %s
@@ -377,11 +460,28 @@ async def complete_booking(
                 )
                 updated_booking = await cur.fetchone()
 
-                return {
-                    "message": "Booking marked as completed successfully",
-                    "booking_id": updated_booking["booking_id"],
-                    "status": updated_booking["status"],
-                }
+                notification = await persist_notification(
+                    conn,
+                    NotificationCreate(
+                        recipient_id=booking_row["worker_id"],
+                        actor_id=UUID(user_id),
+                        notification_type="booking_completed",
+                        title="Booking completed",
+                        body=f"The customer marked the booking for '{booking_row['job_title']}' as completed.",
+                        entity_type="booking",
+                        entity_id=updated_booking["booking_id"],
+                        metadata={"job_id": str(booking_row["job_id"])},
+                    ),
+                )
+
+        if notification:
+            await broadcast_notification(notification)
+
+        return {
+            "message": "Booking marked as completed successfully",
+            "booking_id": updated_booking["booking_id"],
+            "status": updated_booking["status"],
+        }
 
     except HTTPException:
         raise
@@ -402,6 +502,8 @@ async def complete_booking_with_review(
 ):
     try:
         async with conn.transaction():
+            completion_notification = None
+            review_notification = None
             async with conn.cursor() as cur:
                 # Fetch booking and job details
                 await cur.execute(
@@ -411,7 +513,8 @@ async def complete_booking_with_review(
                            b.status AS booking_status,
                            j.job_id AS job_id,
                            j.status AS job_status,
-                           j.client_id AS client_id
+                           j.client_id AS client_id,
+                           j.title AS job_title
                     FROM Bookings b
                     JOIN Jobs j ON j.job_id = b.job_id
                     WHERE b.booking_id = %s
@@ -471,12 +574,43 @@ async def complete_booking_with_review(
                 result = await cur.fetchone()
                 new_review_id = result["review_id"]
 
-                return {
-                    "message": "Booking completed and review submitted successfully",
-                    "booking_id": updated_booking["booking_id"],
-                    "booking_status": updated_booking["status"],
-                    "review_id": new_review_id,
-                }
+                completion_notification = await persist_notification(
+                    conn,
+                    NotificationCreate(
+                        recipient_id=booking_row["worker_id"],
+                        actor_id=UUID(user_id),
+                        notification_type="booking_completed",
+                        title="Booking completed",
+                        body=f"The customer completed the booking for '{booking_row['job_title']}'.",
+                        entity_type="booking",
+                        entity_id=updated_booking["booking_id"],
+                        metadata={"job_id": str(booking_row["job_id"])},
+                    ),
+                )
+
+                review_notification = await persist_notification(
+                    conn,
+                    NotificationCreate(
+                        recipient_id=booking_row["worker_id"],
+                        actor_id=UUID(user_id),
+                        notification_type="review_left",
+                        title="New review received",
+                        body=f"A customer left a review for '{booking_row['job_title']}'.",
+                        entity_type="review",
+                        entity_id=new_review_id,
+                        metadata={"booking_id": str(booking_id), "job_id": str(booking_row["job_id"])},
+                    ),
+                )
+
+        await broadcast_notification(completion_notification)
+        await broadcast_notification(review_notification)
+
+        return {
+            "message": "Booking completed and review submitted successfully",
+            "booking_id": updated_booking["booking_id"],
+            "booking_status": updated_booking["status"],
+            "review_id": new_review_id,
+        }
 
     except psycopg.errors.UniqueViolation:
         raise HTTPException(status_code=409, detail="You have already reviewed this booking.")
@@ -506,6 +640,8 @@ async def start_booking(
                            b.status AS booking_status,
                            j.job_id AS job_id,
                            j.status AS job_status
+                           ,j.client_id AS client_id,
+                           j.title AS job_title
                     FROM Bookings b
                     JOIN Jobs j ON j.job_id = b.job_id
                     WHERE b.booking_id = %s
@@ -543,7 +679,23 @@ async def start_booking(
                     (str(booking_row["job_id"]),),
                 )
 
-                return {
+                notification = await persist_notification(
+                    conn,
+                    NotificationCreate(
+                        recipient_id=booking_row["client_id"],
+                        actor_id=UUID(user_id),
+                        notification_type="booking_started",
+                        title="Booking started",
+                        body=f"Your worker has started the booking for '{booking_row['job_title']}'.",
+                        entity_type="booking",
+                        entity_id=updated_booking["booking_id"],
+                        metadata={"job_id": str(booking_row["job_id"])},
+                    ),
+                )
+
+        await broadcast_notification(notification)
+
+        return {
                     "message": "Booking started (In Progress)",
                     "booking_id": updated_booking["booking_id"],
                     "status": updated_booking["status"],
@@ -574,7 +726,8 @@ async def cancel_booking(
                            b.worker_id AS worker_id,
                            b.status AS booking_status,
                            j.client_id AS client_id,
-                           j.status AS job_status
+                           j.status AS job_status,
+                           j.title AS job_title
                     FROM Bookings b
                     JOIN Jobs j ON j.job_id = b.job_id
                     WHERE b.booking_id = %s
@@ -609,7 +762,24 @@ async def cancel_booking(
                 )
                 updated_booking = await cur.fetchone()
 
-                return {
+                recipient_id = booking_row["client_id"] if str(booking_row["worker_id"]) == user_id else booking_row["worker_id"]
+                notification = await persist_notification(
+                    conn,
+                    NotificationCreate(
+                        recipient_id=recipient_id,
+                        actor_id=UUID(user_id),
+                        notification_type="booking_cancelled",
+                        title="Booking cancelled",
+                        body=f"A booking for '{booking_row['job_title']}' was cancelled.",
+                        entity_type="booking",
+                        entity_id=updated_booking["booking_id"],
+                        metadata={"job_id": str(booking_row.get("job_id", booking_id))},
+                    ),
+                )
+
+        await broadcast_notification(notification)
+
+        return {
                     "message": "Booking cancelled successfully",
                     "booking_id": updated_booking["booking_id"],
                     "status": updated_booking["status"],

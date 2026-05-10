@@ -18,6 +18,8 @@ from pwdlib import PasswordHash
 from .token_generator import Token, TokenData, generate_access_token, generate_refresh_token, SECRET_KEY, ALGORITHM
 import jwt
 from jwt.exceptions import InvalidTokenError
+from modules.notifications.models import NotificationCreate
+from modules.notifications.service import persist_notification, broadcast_notification
 
 password_hash = PasswordHash.recommended()
 
@@ -194,7 +196,7 @@ async def get_new_access_token(refresh_data: RefreshTokenRequest, conn = Depends
         )
     
     token_data = {
-        "sub" : data['user_id'],
+        "sub" : str(data['user_id']),
         "email" : data["email"],
         "role" : data['role'],
         "full_name" : data['full_name']
@@ -274,6 +276,7 @@ async def create_worker_profile(data : RegisterAsWorkerModel, token : Annotated[
     
     try : 
         async with conn.transaction() :
+            notification = None
             async with conn.cursor() as cur :
                 await cur.execute("""SELECT user_id, role FROM Users WHERE user_id=%s""", (user_id,))
                 userdata = await cur.fetchone()
@@ -297,10 +300,26 @@ async def create_worker_profile(data : RegisterAsWorkerModel, token : Annotated[
                 except UniqueViolation :
                     raise HTTPException(status_code=400, detail="Can not add one service multiple times")
 
+                notification = await persist_notification(
+                    conn,
+                    NotificationCreate(
+                        recipient_id=user_id,
+                        actor_id=user_id,
+                        notification_type="profile_updated",
+                        title="Worker profile created",
+                        body="Your worker profile has been created successfully.",
+                        entity_type="worker_profile",
+                        entity_id=None,
+                        metadata={"experience": data.experience},
+                    ),
+                )
 
-                return {
-                    "message" : "Worker Profile Created Succesfully"
-                }
+        if notification:
+            await broadcast_notification(notification)
+
+        return {
+            "message" : "Worker Profile Created Succesfully"
+        }
     except UniqueViolation as e :
         print(e)
         raise HTTPException(status_code=500, detail="Worker Profile already created")

@@ -46,13 +46,11 @@ class WorkerSearchResultItem(BaseModel):
     city: str
     worker_id: UUID
     experience: int
-    availability_status: str
+    availability: str
     bio: Optional[str] = None
     average_rating: float
     total_reviews: int
-    service_id: Optional[UUID] = None
-    service_name: Optional[str] = None
-    hourly_rate: Optional[float] = None
+    skills: List[WorkerSkillInfo] = []
 
 
 class WorkerSearchRequest(BaseModel):
@@ -60,7 +58,7 @@ class WorkerSearchRequest(BaseModel):
     service_id: Optional[UUID] = Field(None, description="Filter by service/skill UUID")
     city: Optional[str] = Field(None, description="Filter by city name")
     min_rating: Optional[float] = Field(None, ge=0, le=5, description="Minimum average rating (0-5)")
-    availability_status: Optional[str] = Field(None, description="Filter by availability (Available, Busy, Offline)")
+    availability: Optional[str] = Field(None, description="Filter by availability (Available, Busy, Offline)")
     search_query: Optional[str] = Field(None, description="Search by worker name or bio")
     limit: int = Field(10, ge=1, le=100, description="Number of results to return")
     offset: int = Field(0, ge=0, description="Pagination offset")
@@ -86,7 +84,7 @@ class WorkerDetailedProfile(BaseModel):
     created_at: str
     worker_id: UUID
     experience: int
-    availability_status: str
+    availability: str
     bio: Optional[str] = None
     average_rating: float
     total_reviews: int

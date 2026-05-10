@@ -1,7 +1,7 @@
 -- Worker Profile Search Queries
 
 -- Query 1: Search workers by service (skill) with optional filters
--- Parameters: service_id (required), city, min_rating, availability_status, limit, offset
+-- Parameters: service_id (required), city, min_rating, availability, limit, offset
 -- Returns: worker profile with user details and service rate
 SELECT 
     u.user_id,
@@ -11,10 +11,10 @@ SELECT
     u.city,
     wp.worker_id,
     wp.experience,
-    wp.availability_status,
+    wp.availability,
     wp.bio,
     wp.average_rating,
-    wp.total_reviews,
+    (SELECT COALESCE(COUNT(*), 0) FROM Reviews WHERE worker_id = wp.worker_id) AS total_reviews,
     ws.service_id,
     s.service_name,
     ws.hourly_rate
@@ -25,15 +25,15 @@ JOIN Services s ON ws.service_id = s.service_id
 WHERE 
     ws.service_id = $1::UUID
     AND u.is_active = true
-    AND wp.availability_status = COALESCE($2, wp.availability_status)  -- filter by availability if provided
-    AND (u.city = $3 OR $3::VARCHAR IS NULL)  -- filter by city if provided
+    AND (wp.availability = $2::VARCHAR OR $2::VARCHAR IS NULL)  -- filter by availability if provided
+    AND (u.city = $3::VARCHAR OR $3::VARCHAR IS NULL)  -- filter by city if provided
     AND wp.average_rating >= COALESCE($4, 0)  -- minimum rating filter
-ORDER BY wp.average_rating DESC, wp.total_reviews DESC, u.full_name ASC
+ORDER BY wp.average_rating DESC, u.full_name ASC
 LIMIT $5 OFFSET $6;
 
 
 -- Query 2: Search workers by multiple criteria (advanced search)
--- Parameters: service_id, city, min_rating, availability_status, limit, offset
+-- Parameters: service_id, city, min_rating, availability, limit, offset
 -- Returns: unique workers with their best-rated service for this criterion
 SELECT DISTINCT ON (wp.worker_id)
     u.user_id,
@@ -43,10 +43,10 @@ SELECT DISTINCT ON (wp.worker_id)
     u.city,
     wp.worker_id,
     wp.experience,
-    wp.availability_status,
+    wp.availability,
     wp.bio,
     wp.average_rating,
-    wp.total_reviews,
+    (SELECT COALESCE(COUNT(*), 0) FROM Reviews WHERE worker_id = wp.worker_id) AS total_reviews,
     ws.service_id,
     s.service_name,
     ws.hourly_rate
@@ -57,9 +57,9 @@ JOIN Services s ON ws.service_id = s.service_id
 WHERE 
     u.is_active = true
     AND (ws.service_id = $1::UUID OR $1::UUID IS NULL)  -- filter by service if provided
-    AND (u.city = $2 OR $2::VARCHAR IS NULL)  -- filter by city if provided
+    AND (u.city = $2::VARCHAR OR $2::VARCHAR IS NULL)  -- filter by city if provided
     AND wp.average_rating >= COALESCE($3, 0)  -- minimum rating filter
-    AND (wp.availability_status = $4 OR $4::VARCHAR IS NULL)  -- filter by availability if provided
+    AND (wp.availability = $4::VARCHAR OR $4::VARCHAR IS NULL)  -- filter by availability if provided
 ORDER BY wp.worker_id, wp.average_rating DESC
 LIMIT $5 OFFSET $6;
 
@@ -76,10 +76,10 @@ SELECT
     u.created_at,
     wp.worker_id,
     wp.experience,
-    wp.availability_status,
+    wp.availability,
     wp.bio,
     wp.average_rating,
-    wp.total_reviews,
+    (SELECT COALESCE(COUNT(*), 0) FROM Reviews WHERE worker_id = wp.worker_id) AS total_reviews,
     json_agg(
         json_build_object(
             'service_id', s.service_id,
@@ -95,8 +95,8 @@ WHERE
     wp.worker_id = $1::UUID
     AND u.is_active = true
 GROUP BY u.user_id, u.full_name, u.email, u.phone_number, u.city, 
-         u.created_at, wp.worker_id, wp.experience, wp.availability_status,
-         wp.bio, wp.average_rating, wp.total_reviews;
+         u.created_at, wp.worker_id, wp.experience, wp.availability,
+         wp.bio, wp.average_rating;
 
 
 -- Query 4: Get worker's recent reviews (for customer view)
@@ -128,10 +128,10 @@ SELECT
     u.city,
     wp.worker_id,
     wp.experience,
-    wp.availability_status,
+    wp.availability,
     wp.bio,
     wp.average_rating,
-    wp.total_reviews,
+    (SELECT COALESCE(COUNT(*), 0) FROM Reviews WHERE worker_id = wp.worker_id) AS total_reviews,
     ws.service_id,
     s.service_name,
     ws.hourly_rate,
@@ -158,7 +158,7 @@ LIMIT $3 OFFSET $4;
 -- Parameters: none
 -- Returns: count of workers by availability status
 SELECT 
-    availability_status,
+    availability,
     COUNT(*) AS worker_count
 FROM worker_profile
-GROUP BY availability_status;
+GROUP BY availability;
