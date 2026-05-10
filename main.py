@@ -57,7 +57,8 @@ app.include_router(notifications_router, prefix="/api")
 
 
 allowed_origins = [
-    "http://localhost:5173"
+    "http://localhost:5173",
+    "https://ustaad.onrender.com"
 ]
 
 app.add_middleware(
