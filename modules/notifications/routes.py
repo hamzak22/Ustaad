@@ -50,17 +50,16 @@ async def notifications_ws(websocket: WebSocket):
     await manager.connect(user_id, websocket)
 
     try:
-        conn = websocket.app.state.db_pool.connection()
-        async with conn as db_conn:
+        async with websocket.app.state.db_pool.connection() as db_conn:
             unread_count = await count_unread_notifications(db_conn, UUID(user_id))
             recent_notifications = await get_recent_notifications(db_conn, UUID(user_id), limit=10, offset=0)
 
-        await websocket.send_json(
-            WebSocketHandshake(
-                unread_count=unread_count,
-                recent_notifications=recent_notifications,
-            ).model_dump(mode="json")
-        )
+            await websocket.send_json(
+                WebSocketHandshake(
+                    unread_count=unread_count,
+                    recent_notifications=recent_notifications,
+                ).model_dump(mode="json")
+            )
 
         while True:
             await websocket.receive_text()
