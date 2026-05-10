@@ -4,3 +4,7 @@ pwdlib[argon2]
 uvicorn
 psycopg
 python-dotenv
+pydantic
+pydantic-settings
+pydantic[email]
+psycopg-pool
