@@ -33,7 +33,22 @@ DATABASE_URL = settings.DB_URL
 async def Lifespan(app:FastAPI) :
     print("Initializing Database pool....")
 
-    database.pool = AsyncConnectionPool(conninfo=DATABASE_URL, open=True, kwargs={"row_factory" : dict_row})
+    database.pool = AsyncConnectionPool(
+    conninfo=DATABASE_URL,
+    open=True,
+    min_size=1,
+    max_size=10,
+    max_idle=300,                          # ✅ close idle connections after 5 mins
+    reconnect_timeout=30,                  # ✅ auto reconnect if connection drops
+    kwargs={
+        "row_factory": dict_row,
+        "prepare_threshold": 0,
+        "keepalives": 1,                   # ✅ enable TCP keepalives
+        "keepalives_idle": 60,             # ✅ send keepalive after 60s idle
+        "keepalives_interval": 10,         # ✅ retry every 10s
+        "keepalives_count": 5,             # ✅ drop after 5 failed keepalives
+    }
+)
     app.state.db_pool = database.pool
 
     yield
