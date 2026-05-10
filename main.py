@@ -58,7 +58,7 @@ app.include_router(notifications_router, prefix="/api")
 
 allowed_origins = [
     "http://localhost:5173",
-    "https://ustaad.onrender.com"
+    "https://ustaad-frontend.vercel.app/"
 ]
 
 app.add_middleware(
