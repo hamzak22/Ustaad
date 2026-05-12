@@ -26,6 +26,8 @@ class UserProfileResponse(BaseModel):
     phone_number: Optional[str] = None
     role: str
     bio: Optional[str] = None
+    total_reviews : Optional[int] = None
+    avg_rating : Optional[float] = None
     skills: List[dict] = [] 
 
 

@@ -204,6 +204,12 @@ async def create_job(data : CreateJobModel, conn : AsyncConnection = Depends(get
                     if not worker_check:
                         raise HTTPException(status_code=400, detail="Target worker does not exist or is not a valid worker.")
                     
+                    # Prevent a worker from creating a direct job that targets their own account
+                    await cur.execute("SELECT role FROM Users WHERE user_id = %s", (user_id,))
+                    requester = await cur.fetchone()
+                    if requester and requester.get("role") == 'Worker' and str(data.target_worker) == user_id:
+                        raise HTTPException(status_code=403, detail="Workers cannot create direct jobs targeting their own account.")
+
                     await cur.execute(query_direct, (data.service_id, data.title, data.description, data.job_type.value, "Open", data.location, data.city, data.budget, user_id, data.target_worker,))
 
                 job_row = await cur.fetchone()

@@ -105,6 +105,7 @@ async def count_unread_notifications(conn: psycopg.AsyncConnection, recipient_id
         await cur.execute(
             "SELECT COUNT(*) AS unread_count FROM Notifications WHERE recipient_id = %s AND is_read = false",
             (str(recipient_id),),
+            prepare=False,
         )
         row = await cur.fetchone()
         return int(row["unread_count"] if row else 0)

@@ -25,8 +25,8 @@ JOIN Services s ON ws.service_id = s.service_id
 WHERE 
     ws.service_id = $1::UUID
     AND u.is_active = true
-    AND (wp.availability = $2::VARCHAR OR $2::VARCHAR IS NULL)  -- filter by availability if provided
-    AND (u.city = $3::VARCHAR OR $3::VARCHAR IS NULL)  -- filter by city if provided
+    AND (wp.availability = $2 OR $2 IS NULL)  -- filter by availability if provided
+    AND (u.city = $3 OR $3 IS NULL)  -- filter by city if provided
     AND wp.average_rating >= COALESCE($4, 0)  -- minimum rating filter
 ORDER BY wp.average_rating DESC, u.full_name ASC
 LIMIT $5 OFFSET $6;

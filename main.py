@@ -42,7 +42,8 @@ async def Lifespan(app:FastAPI) :
     reconnect_timeout=30,                  # ✅ auto reconnect if connection drops
     kwargs={
         "row_factory": dict_row,
-        "prepare_threshold": 0,
+        # Disable server-side prepared statements (PgBouncer/transaction pooling safe).
+        "prepare_threshold": None,
         "keepalives": 1,                   # ✅ enable TCP keepalives
         "keepalives_idle": 60,             # ✅ send keepalive after 60s idle
         "keepalives_interval": 10,         # ✅ retry every 10s

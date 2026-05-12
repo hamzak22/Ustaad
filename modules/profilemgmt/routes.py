@@ -45,7 +45,7 @@ async def get_my_profile(
     async with conn.cursor() as cur:
         # 1. Fetch base user info & worker bio using a LEFT JOIN
         await cur.execute("""
-            SELECT u.user_id, u.full_name, u.email, u.phone_number, u.role, u.is_active, wp.bio
+            SELECT u.user_id, u.full_name, u.email, u.phone_number, u.role, u.is_active, wp.bio, wp.average_rating, wp.total_reviews
             FROM Users u
             LEFT JOIN worker_profile wp ON u.user_id = wp.worker_id
             WHERE u.user_id = %s
@@ -85,6 +85,8 @@ async def get_my_profile(
             "phone_number": user_row["phone_number"],
             "role": user_row["role"],
             "bio": user_row["bio"],
+            "total_reviews" : user_row["total_reviews"],
+            "avg_rating" : user_row["average_rating"],
             "skills": skills_list
         }
 
